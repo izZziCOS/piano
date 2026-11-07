@@ -37,7 +37,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 90,
     desc: 'Rest your right thumb on middle C with one finger per key, so C is finger 1 and G is finger 5. Don’t look at your hand.',
-    rh: 'C4 D4 E4 F4 | G4 F4 E4 D4 | C4 E4 D4 F4 | E4 G4 F4 D4 | C4:4',
+    rh: '!mf C4@1 D4@2 E4@3 F4@4 | G4@5 F4@4 E4@3 D4@2 | C4@1 E4@3 D4@2 F4@4 | E4@3 G4@5 F4@4 D4@2 | C4@1:4',
   },
   {
     id: 'hot-cross-buns',
@@ -46,7 +46,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 100,
     desc: 'Only three notes: E, D and C. The third bar has eighth notes, two to each beat.',
-    rh: 'E4 D4 C4:2 | E4 D4 C4:2 | C4:0.5 C4:0.5 C4:0.5 C4:0.5 D4:0.5 D4:0.5 D4:0.5 D4:0.5 | E4 D4 C4:2',
+    rh: '!mf E4@3 D4@2 C4@1:2 | E4 D4 C4:2 | C4:0.5 C4:0.5 C4:0.5 C4:0.5 D4:0.5 D4:0.5 D4:0.5 D4:0.5 | E4 D4 C4:2',
   },
   {
     id: 'lh-c-position',
@@ -55,7 +55,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 90,
     desc: 'Left hand: pinky (finger 5) on the C below middle C, thumb on G. Notes in the bass clef read differently from the treble clef.',
-    lh: 'C3 D3 E3 F3 | G3 F3 E3 D3 | C3 E3 D3 F3 | E3 G3 F3 D3 | C3:4',
+    lh: '!mf C3@5 D3@4 E3@3 F3@2 | G3@1 F3@2 E3@3 D3@4 | C3@5 E3@3 D3@4 F3@2 | E3@3 G3@1 F3@2 D3@4 | C3@5:4',
   },
   {
     id: 'mary-hands',
@@ -64,7 +64,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 100,
     desc: 'Learn the right hand first. Then add the left hand, which plays one long note per bar.',
-    rh: 'E4 D4 C4 D4 | E4 E4 E4:2 | D4 D4 D4:2 | E4 G4 G4:2 | E4 D4 C4 D4 | E4 E4 E4 E4 | D4 D4 E4 D4 | C4:4',
+    rh: '!mf E4@3 D4@2 C4@1 D4@2 | E4@3 E4 E4:2 | D4@2 D4 D4:2 | E4@3 G4@5 G4:2 | E4 D4 C4 D4 | E4 E4 E4 E4 | D4 D4 E4 D4 | C4:4',
     lh: 'C3:4 | C3:4 | G2:4 | C3:4 | C3:4 | C3:4 | G2:4 | C3:4',
   },
   {
@@ -74,7 +74,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 96,
     desc: 'Fingering: 1-2-3, then tuck your thumb under to F, then 1-2-3-4-5. Coming down, cross finger 3 over to E.',
-    rh: 'C4 D4 E4 F4 | G4 A4 B4 C5 | B4 A4 G4 F4 | E4 D4 C4:2',
+    rh: 'C4@1 D4@2 E4@3 F4@1 | G4@2 A4@3 B4@4 C5@5 | B4@4 A4@3 G4@2 F4@1 | E4@3 D4@2 C4@1:2',
   },
   {
     id: 'lh-scale',
@@ -83,7 +83,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 90,
     desc: 'Left hand: 5-4-3-2-1, then cross finger 3 over to A, then 2-1. Reverse the crossing on the way down.',
-    lh: 'C3 D3 E3 F3 | G3 A3 B3 C4 | B3 A3 G3 F3 | E3 D3 C3:2',
+    lh: 'C3@5 D3@4 E3@3 F3@2 | G3@1 A3@3 B3@2 C4@1 | B3@2 A3@3 G3@1 F3@2 | E3@3 D3@4 C3@5:2',
   },
   {
     id: 'twinkle-hands',
@@ -92,7 +92,7 @@ export const PIECES = [
     level: 'Beginner',
     key: 'C', time: '4/4', bpm: 100,
     desc: 'The first jump is from C up to G, a fifth. Stretch your hand from thumb to pinky.',
-    rh: 'C4 C4 G4 G4 | A4 A4 G4:2 | F4 F4 E4 E4 | D4 D4 C4:2 | G4 G4 F4 F4 | E4 E4 D4:2 | G4 G4 F4 F4 | E4 E4 D4:2 | C4 C4 G4 G4 | A4 A4 G4:2 | F4 F4 E4 E4 | D4 D4 C4:2',
+    rh: '!mp C4@1 C4 G4@4 G4 | A4@5 A4 G4@4:2 | F4@3 F4 E4@2 E4 | D4@1 D4 C4@1:2 | G4 G4 F4 F4 | E4 E4 D4:2 | G4 G4 F4 F4 | E4 E4 D4:2 | C4 C4 G4 G4 | A4 A4 G4:2 | F4 F4 E4 E4 | D4 D4 C4:2',
     lh: 'C3:4 | F3:2 C3:2 | G2:2 C3:2 | G2:2 C3:2 | C3:2 G2:2 | C3:2 G2:2 | C3:2 G2:2 | C3:2 G2:2 | C3:4 | F3:2 C3:2 | G2:2 C3:2 | G2:2 C3:2',
   },
 
@@ -104,7 +104,7 @@ export const PIECES = [
     level: 'Easy',
     key: 'C', time: '4/4', bpm: 108,
     desc: 'Mostly steps between neighbouring keys. Watch the dotted quarter followed by an eighth in bars 4 and 8.',
-    rh: 'E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | E4:1.5 D4:0.5 D4:2 | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4:1.5 C4:0.5 C4:2',
+    rh: '!mf E4@3 E4 F4@4 G4@5 | G4 F4 E4 D4@2 | C4@1 C4 D4 E4 | E4:1.5 D4:0.5 D4:2 | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4:1.5 C4:0.5 C4:2',
     lh: 'C3:4 | G2:4 | C3:4 | C3:2 G2:2 | C3:4 | G2:4 | C3:4 | G2:2 C3:2',
   },
   {
@@ -123,7 +123,7 @@ export const PIECES = [
     level: 'Easy',
     key: 'G', time: '4/4', bpm: 96,
     desc: 'The key signature has one sharp, so every F is played as F♯ even though no ♯ is written next to the note.',
-    rh: 'G4 A4 B4 C5 | D5 E5 F#5 G5 | F#5 E5 D5 C5 | B4 A4 G4:2',
+    rh: 'G4@1 A4@2 B4@3 C5@1 | D5@2 E5@3 F#5@4 G5@5 | F#5@4 E5@3 D5@2 C5@1 | B4@3 A4@2 G4@1:2',
   },
   {
     id: 'amazing-grace',
@@ -132,8 +132,19 @@ export const PIECES = [
     level: 'Easy',
     key: 'G', time: '3/4', bpm: 90, pickup: 1,
     desc: 'In 3/4, so count 1-2-3. It starts with a one-beat pickup before the first full bar.',
-    rh: 'D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | G4:2 E4 | D4:2 D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | D5:3 | D5:2 B4:0.5 D5:0.5 | B4:2 G4 | D4:2 E4 | G4:2 E4 | D4:2 D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | G4:2',
+    rh: '!p D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | G4:2 E4 | D4:2 D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | D5:3 | D5:2 B4:0.5 D5:0.5 | B4:2 G4 | D4:2 E4 | G4:2 E4 | D4:2 D4 | G4:2 B4:0.5 G4:0.5 | B4:2 A4 | G4:2',
     lh: 'R:1 | G3:3 | G3:3 | C3:3 | G3:3 | G3:3 | D3:3 | D3:3 | G3:3 | G3:3 | C3:3 | C3:3 | G3:3 | G3:3 | D3:3 | G3:2',
+  },
+
+  {
+    id: 'ode-full',
+    title: 'Ode to Joy (complete theme)',
+    composer: 'L. van Beethoven (arr.)',
+    level: 'Easy',
+    key: 'C', time: '4/4', bpm: 104,
+    desc: 'The full theme, with the contrasting middle phrase. The last C is tied: the curved line joins two notes into one long note, so hold it for six beats.',
+    rh: '!mf E4@3 E4 F4@4 G4@5 | G4 F4 E4 D4@2 | C4@1 C4 D4 E4 | E4:1.5 D4:0.5 D4:2 | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4:1.5 C4:0.5 C4:2 | D4@2 D4 E4 C4@1 | D4@2 E4:0.5 F4:0.5 E4 C4 | D4 E4:0.5 F4:0.5 E4 D4 | C4 D4 G3:2 | E4@3 E4 F4@4 G4@5 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4:1.5 C4:0.5 C4:2~ | C4:4',
+    lh: 'C3:4 | G2:4 | C3:4 | C3:2 G2:2 | C3:4 | G2:4 | C3:4 | G2:2 C3:2 | G2:4 | G2:2 C3:2 | G2:2 C3:2 | G2:4 | C3:4 | G2:4 | C3:4 | G2:2 C3:2~ | C3:4',
   },
 
   // ---- Intermediate ----
@@ -151,9 +162,9 @@ export const PIECES = [
     title: 'Minuet in G',
     composer: 'C. Petzold (simplified)',
     level: 'Intermediate',
-    key: 'G', time: '3/4', bpm: 100,
-    desc: 'A graceful dance in 3/4. Practise each hand on its own before putting them together.',
-    rh: 'D5 G4:0.5 A4:0.5 B4:0.5 C5:0.5 | D5 G4 G4 | E5 C5:0.5 D5:0.5 E5:0.5 F#5:0.5 | G5 G4 G4 | C5 D5:0.5 C5:0.5 B4:0.5 A4:0.5 | B4 C5:0.5 B4:0.5 A4:0.5 G4:0.5 | F#4 G4:0.5 A4:0.5 B4:0.5 G4:0.5 | A4:3',
+    key: 'G', time: '3/4', bpm: 100, repeat: true,
+    desc: 'A graceful dance in 3/4. The repeat signs (:‖) mean you play it twice. Practise each hand on its own before putting them together.',
+    rh: '!mf D5 G4:0.5 A4:0.5 B4:0.5 C5:0.5 | D5 G4 G4 | E5 C5:0.5 D5:0.5 E5:0.5 F#5:0.5 | G5 G4 G4 | C5 D5:0.5 C5:0.5 B4:0.5 A4:0.5 | B4 C5:0.5 B4:0.5 A4:0.5 G4:0.5 | F#4 G4:0.5 A4:0.5 B4:0.5 G4:0.5 | A4:3',
     lh: 'G3+B3:2 A3 | B3:3 | C4:3 | B3:3 | A3:3 | G3:3 | D4 B3 G3 | D4:2 D3',
   },
   {
@@ -163,7 +174,7 @@ export const PIECES = [
     level: 'Intermediate',
     key: 'D', time: '4/4', bpm: 72,
     desc: 'Two sharps, F♯ and C♯. The left hand repeats the same eight-note bass line, which is what makes it a ground bass.',
-    rh: 'F#5:2 E5:2 | D5:2 C#5:2 | B4:2 A4:2 | B4:2 C#5:2 | D5:2 C#5:2 | B4:2 A4:2 | G4:2 F#4:2 | G4:2 E4:2 | D4+F#4+A4:4',
+    rh: '!p F#5:2 E5:2 | D5:2 C#5:2 | B4:2 A4:2 | B4:2 C#5:2 | D5:2 C#5:2 | B4:2 A4:2 | G4:2 F#4:2 | G4:2 E4:2 | D4+F#4+A4:4',
     lh: 'D3:2 A2:2 | B2:2 F#2:2 | G2:2 D2:2 | G2:2 A2:2 | D3:2 A2:2 | B2:2 F#2:2 | G2:2 D2:2 | G2:2 A2:2 | D2:4',
   },
   {
@@ -173,7 +184,7 @@ export const PIECES = [
     level: 'Intermediate',
     key: 'C', time: '3/8', bpm: 60, pickup: 0.5,
     desc: 'In 3/8, so count the eighth notes. The hands take turns: the left-hand broken chord leads straight into the right hand.',
-    rh: 'E5:0.25 D#5:0.25 | E5:0.25 D#5:0.25 E5:0.25 B4:0.25 D5:0.25 C5:0.25 | A4:0.5 R:0.25 C4:0.25 E4:0.25 A4:0.25 | B4:0.5 R:0.25 E4:0.25 G#4:0.25 B4:0.25 | C5:0.5 R:0.25 E4:0.25 E5:0.25 D#5:0.25 | E5:0.25 D#5:0.25 E5:0.25 B4:0.25 D5:0.25 C5:0.25 | A4:0.5 R:0.25 C4:0.25 E4:0.25 A4:0.25 | B4:0.5 R:0.25 E4:0.25 C5:0.25 B4:0.25 | A4:1',
+    rh: '!pp E5:0.25 D#5:0.25 | E5:0.25 D#5:0.25 E5:0.25 B4:0.25 D5:0.25 C5:0.25 | A4:0.5 R:0.25 C4:0.25 E4:0.25 A4:0.25 | B4:0.5 R:0.25 E4:0.25 G#4:0.25 B4:0.25 | C5:0.5 R:0.25 E4:0.25 E5:0.25 D#5:0.25 | E5:0.25 D#5:0.25 E5:0.25 B4:0.25 D5:0.25 C5:0.25 | A4:0.5 R:0.25 C4:0.25 E4:0.25 A4:0.25 | B4:0.5 R:0.25 E4:0.25 C5:0.25 B4:0.25 | A4:1',
     lh: 'R:0.5 | R:1.5 | A2:0.25 E3:0.25 A3:0.25 R:0.75 | E2:0.25 E3:0.25 G#3:0.25 R:0.75 | A2:0.25 E3:0.25 A3:0.25 R:0.75 | R:1.5 | A2:0.25 E3:0.25 A3:0.25 R:0.75 | E2:0.25 E3:0.25 G#3:0.25 R:0.75 | A2:1',
     measureWidth: 260,
   },
@@ -186,7 +197,7 @@ export const PIECES = [
     level: 'Advanced',
     key: 'C', time: '4/4', bpm: 66,
     desc: 'Each bar is one chord played as a pattern of sixteenth notes. Spot the chord shape and your hand can find the notes.',
-    rh: 'C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 | C4:0.25 D4:0.25 A4:0.25 D5:0.25 F5:0.25 A4:0.25 D5:0.25 F5:0.25 C4:0.25 D4:0.25 A4:0.25 D5:0.25 F5:0.25 A4:0.25 D5:0.25 F5:0.25 | B3:0.25 D4:0.25 G4:0.25 D5:0.25 F5:0.25 G4:0.25 D5:0.25 F5:0.25 B3:0.25 D4:0.25 G4:0.25 D5:0.25 F5:0.25 G4:0.25 D5:0.25 F5:0.25 | C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25',
+    rh: '!p C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 | C4:0.25 D4:0.25 A4:0.25 D5:0.25 F5:0.25 A4:0.25 D5:0.25 F5:0.25 C4:0.25 D4:0.25 A4:0.25 D5:0.25 F5:0.25 A4:0.25 D5:0.25 F5:0.25 | B3:0.25 D4:0.25 G4:0.25 D5:0.25 F5:0.25 G4:0.25 D5:0.25 F5:0.25 B3:0.25 D4:0.25 G4:0.25 D5:0.25 F5:0.25 G4:0.25 D5:0.25 F5:0.25 | C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25 C4:0.25 E4:0.25 G4:0.25 C5:0.25 E5:0.25 G4:0.25 C5:0.25 E5:0.25',
     lh: 'C3:4 | C3:4 | B2:4 | C3:4',
     measureWidth: 420,
   },

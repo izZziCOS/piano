@@ -1,6 +1,7 @@
 // Sound engine: a sampled grand piano (Salamander, CC BY 3.0, see
-// samples/salamander/LICENSE.txt) with a small synth used as a fallback while
-// the samples load, or if the player picks it. Includes a sustain pedal.
+// samples/salamander/LICENSE.txt) recorded at three dynamic levels, with a
+// small synth as a fallback while the samples load, or if the player picks it.
+// Also: sustain pedal, metronome clicks and precisely scheduled notes.
 import { midiToFreq } from './notes.js';
 
 let ctx = null;
@@ -11,12 +12,13 @@ let pedal = false;
 
 const live = new Map(); // midi -> voice held by the player
 const sustained = []; // voices released while the pedal was down
-const buffers = new Map(); // sample midi -> AudioBuffer
+const buffers = { p: new Map(), m: new Map(), f: new Map() }; // layer -> (sample midi -> AudioBuffer)
+const LAYERS = ['m', 'p', 'f']; // medium loads first so the piano is playable sooner
 let loadState = 'idle'; // idle | loading | ready | failed
 const statusListeners = new Set();
 
-// Samples every minor third from A0 to C8.
-const SAMPLE_FILES = (() => {
+// Samples every minor third from A0 to C8, in three velocity layers.
+const SAMPLE_NOTES = (() => {
   const files = [['A0', 21]];
   const pcs = { C: 0, Ds: 3, Fs: 6, A: 9 };
   for (let oct = 1; oct <= 7; oct++) {
@@ -43,22 +45,31 @@ function ensure() {
 
 // ------------------------------------------------------------------ samples
 
-/** Start downloading the piano samples. Safe to call before any user gesture. */
+/**
+ * Start downloading the piano samples. Safe to call before any user gesture.
+ * The medium layer loads first (the piano is usable as soon as it's in), then
+ * the soft and loud layers in the background.
+ */
 export function loadPiano() {
   if (loadState !== 'idle') return;
   setLoadState('loading');
   // Decode with an offline context so no audio output is created before a gesture.
-  const decoder = new OfflineAudioContext(2, 1, 44100);
+  const decoder = new OfflineAudioContext(1, 1, 44100);
   const base = new URL('../samples/salamander/', import.meta.url);
-  Promise.allSettled(SAMPLE_FILES.map(async ([name, midi]) => {
-    const res = await fetch(new URL(`${name}.mp3`, base));
-    if (!res.ok) throw new Error(`${name}: ${res.status}`);
-    const data = await res.arrayBuffer();
-    buffers.set(midi, await decoder.decodeAudioData(data));
-  })).then((results) => {
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    setLoadState(ok >= SAMPLE_FILES.length * 0.8 ? 'ready' : 'failed');
-  });
+  const loadLayer = (layer) => Promise.allSettled(SAMPLE_NOTES.map(async ([name, midi]) => {
+    const res = await fetch(new URL(`${name}-${layer}.mp3`, base));
+    if (!res.ok) throw new Error(`${name}-${layer}: ${res.status}`);
+    buffers[layer].set(midi, await decoder.decodeAudioData(await res.arrayBuffer()));
+  }));
+  (async () => {
+    for (const layer of LAYERS) {
+      await loadLayer(layer);
+      if (layer === 'm') {
+        setLoadState(buffers.m.size >= SAMPLE_NOTES.length * 0.8 ? 'ready' : 'failed');
+        if (loadState === 'failed') return;
+      }
+    }
+  })();
 }
 
 function setLoadState(s) {
@@ -71,28 +82,36 @@ export function onLoadState(fn) {
   fn(loadState);
 }
 
-function nearestSample(midi) {
+function nearestSample(map, midi) {
   let best = null;
-  for (const m of buffers.keys()) {
+  for (const m of map.keys()) {
     if (best === null || Math.abs(m - midi) < Math.abs(best - midi)) best = m;
   }
   return best;
 }
 
+/** Which recorded dynamic to use: soft (p), medium (m) or loud (f). */
+function layerFor(velocity) {
+  const want = velocity < 0.45 ? 'p' : velocity < 0.85 ? 'm' : 'f';
+  return buffers[want].size === SAMPLE_NOTES.length ? want : 'm'; // until that layer has loaded
+}
+
 function sampleVoice(midi, velocity, t) {
   const c = ensure();
-  const sm = nearestSample(midi);
+  const layer = layerFor(velocity);
+  const sm = nearestSample(buffers[layer], midi);
   const src = c.createBufferSource();
-  src.buffer = buffers.get(sm);
+  src.buffer = buffers[layer].get(sm);
   src.playbackRate.value = Math.pow(2, (midi - sm) / 12);
 
-  // Softer notes on a real piano are also darker.
+  // The recordings already differ in tone between layers; the filter only
+  // smooths the steps within a layer.
   const filter = c.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.value = 1200 + 14000 * velocity * velocity;
+  filter.frequency.value = 3000 + 15000 * velocity;
 
   const env = c.createGain();
-  const level = 0.25 + 0.95 * Math.pow(velocity, 1.6);
+  const level = 1.5 * (0.7 + 0.3 * velocity);
   env.gain.setValueAtTime(level, t);
   src.connect(filter).connect(env).connect(master);
   src.start(t);
@@ -144,7 +163,7 @@ function synthVoice(midi, velocity, t) {
 // ------------------------------------------------------------------- voices
 
 function createVoice(midi, velocity, t) {
-  return instrument === 'piano' && loadState === 'ready'
+  return instrument === 'piano' && loadState === 'ready' && buffers.m.size
     ? sampleVoice(midi, velocity, t)
     : synthVoice(midi, velocity, t);
 }
@@ -202,11 +221,68 @@ export function setVolume(v) {
 /** Wake the audio context from a user gesture (browsers block autoplay). */
 export function unlock() { ensure(); }
 
+// ------------------------------------------------------------- scheduling
+
+/** Current audio clock time in seconds. */
+export const now = () => ensure().currentTime;
+
+/**
+ * Convert an audio-clock time to the performance.now() time at which the
+ * listener actually hears it (including output latency), so key presses can be
+ * compared with when the beat was heard.
+ */
+export function heardAt(audioTime) {
+  const c = ensure();
+  const latency = (c.baseLatency || 0) + (c.outputLatency || 0);
+  return performance.now() + (audioTime - c.currentTime + latency) * 1000;
+}
+
+/** Metronome click at an audio time. `accent` for the first beat of a bar. */
+export function click(t, accent = false) {
+  const c = ensure();
+  const o = c.createOscillator();
+  const g = c.createGain();
+  o.type = 'square';
+  o.frequency.value = accent ? 1760 : 1320;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(accent ? 0.22 : 0.13, t + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+  o.connect(g).connect(master);
+  o.start(t);
+  o.stop(t + 0.06);
+  return { env: g, sources: [o], damper: 0.01 };
+}
+
+/**
+ * Schedule notes and clicks at absolute audio times:
+ * notes [{ midi, at, dur, velocity }], clicks [{ at, accent }].
+ * Returns a function that silences everything.
+ */
+export function schedule({ notes = [], clicks = [] }) {
+  const voices = [];
+  for (const n of notes) {
+    const v = createVoice(n.midi, n.velocity ?? 0.6, n.at);
+    releaseVoice(v, n.at + n.dur * 0.95);
+    voices.push(v);
+  }
+  for (const k of clicks) voices.push(click(k.at, k.accent));
+  return () => {
+    const t = ctx.currentTime;
+    for (const v of voices) {
+      v.env.gain.cancelScheduledValues(0);
+      v.env.gain.setValueAtTime(0, t);
+      for (const src of v.sources) {
+        try { src.stop(t + 0.02); } catch { /* not started or already stopped */ }
+      }
+    }
+  };
+}
+
 /** Play notes right now for a fixed length (used for auto-played accompaniment). */
 export function playNotes(notes, bpm = 100) {
   const c = ensure();
-  for (const { midi, beats } of notes) {
-    const v = createVoice(midi, 0.55, c.currentTime);
+  for (const { midi, beats, velocity } of notes) {
+    const v = createVoice(midi, velocity ?? 0.55, c.currentTime);
     releaseVoice(v, c.currentTime + beats * (60 / bpm) * 0.95);
   }
 }
@@ -229,7 +305,7 @@ export function playSequence(steps, { bpm = 100, onStep, onDone } = {}) {
     const dur = step.beats * spb;
     const notes = step.notes ?? (step.midis ?? [step.midi]).map((midi) => ({ midi, beats: step.beats }));
     for (const n of notes) {
-      const v = createVoice(n.midi, 0.65, t);
+      const v = createVoice(n.midi, n.velocity ?? 0.65, t);
       releaseVoice(v, t + n.beats * spb * 0.95);
       voices.push(v);
     }

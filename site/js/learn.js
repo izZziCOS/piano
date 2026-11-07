@@ -163,6 +163,29 @@ const CHAPTERS = [
     practice: { label: 'Name notes with key signatures', href: '#sheet/random?mode=name&clef=treble&keys=medium&keymode=both&accidentals=1' },
   },
   {
+    id: 'markings',
+    title: 'Fingering, ties, dynamics & repeats',
+    body: `
+      <p>Sheet music tells you more than which notes to play:</p>
+      <ul class="defs">
+        <li><strong>Fingering</strong> numbers above or below a note say which finger to use. Your thumb is 1 and your
+        little finger is 5, on <em>both</em> hands.</li>
+        <li>A <strong>tie</strong> is a curved line joining two notes of the <em>same</em> pitch. Play the first one and hold it
+        through the second. Ties let a note last across a bar line.</li>
+        <li><strong>Dynamics</strong> say how loud to play: <em>pp</em> very soft, <em>p</em> soft, <em>mp</em> and <em>mf</em>
+        moderately soft and loud, <em>f</em> loud, <em>ff</em> very loud. On a piano, loudness comes from how fast you press the key.</li>
+        <li><strong>Repeat signs</strong> (a thick and thin line with two dots, like <strong>:‖</strong>) mean go back to the matching
+        sign, or to the beginning, and play that part again.</li>
+      </ul>`,
+    examples: [
+      { caption: 'Fingering for the right hand in C position', piece: ex({ rh: 'C4@1 D4@2 E4@3 F4@4 | G4@5 F4@4 E4@3 D4@2 | C4@1:4' }) },
+      { caption: 'A tie: the E is held for four beats, across the bar line', names: true, piece: ex({ rh: 'C5:2 E5:2~ | E5:2 C5:2' }) },
+      { caption: 'Dynamics: soft (p), then loud (f). Listen to the difference', piece: ex({ rh: '!p C4 E4 G4 C5 | !f C5 G4 E4 C4' }) },
+      { caption: 'Repeat signs: play these two bars twice', piece: ex({ rh: 'C4 D4 E4 F4 | G4:4', repeat: true }) },
+    ],
+    practice: { label: 'Play the C position exercise with fingering', href: '#sheet/rh-c-position?mode=play' },
+  },
+  {
     id: 'reading-tips',
     title: 'Reading tips',
     body: `
@@ -262,7 +285,7 @@ function playExample(j, btn) {
   const { score } = CHAPTERS[current].examples[j];
   const steps = score.steps.map((s) => ({
     beats: s.beats,
-    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.beats }))),
+    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.play, velocity: e.vel }))),
   }));
   // Rests at the very start: delay the first note.
   if (score.steps[0]?.time > 0) steps.unshift({ beats: score.steps[0].time, notes: [] });

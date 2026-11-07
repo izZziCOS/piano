@@ -2,19 +2,16 @@
 import { diatonicToMidi, diatonicName, pitchClass, noteName } from './notes.js';
 import * as store from './storage.js';
 import * as noteStats from './stats.js';
+import { buildScore, renderScore } from './sheet.js';
 
 const $ = (id) => document.getElementById(id);
 
-// Diatonic numbers: C4 = 28. The bottom staff line is E4 (30) in treble, G2 (18) in bass.
+// Diatonic numbers: C4 = 28.
 const CLEFS = {
-  treble: { bottom: 30, min: 28, max: 40, glyph: '\u{1D11E}', glyphLine: 31 }, // C4–A5, G-clef on G4
-  bass: { bottom: 18, min: 16, max: 28, glyph: '\u{1D122}', glyphLine: 24 }, // E2–C4, F-clef on F3
+  treble: { min: 28, max: 40 }, // C4–A5
+  bass: { min: 16, max: 28 }, // E2–C4
 };
 
-const SPACE = 12; // distance between staff lines
-const TOP = 48; // y of the top staff line
-const BOTTOM = TOP + 4 * SPACE;
-const NOTE_X = 150;
 
 let kb;
 let q = null;
@@ -78,7 +75,7 @@ function next() {
     noteStats.weight(clefName, diatonicName(c.dia, c.acc)) * (c.acc ? 0.6 : 1));
 
   q = { clefName, clef, dia, acc, midi, answered: false, missed: false, shownAt: performance.now() };
-  $('quiz-staff').innerHTML = drawStaff(q);
+  drawStaff(q);
   $('quiz-staff').setAttribute('aria-label', `${clefName} clef staff showing a note`);
   setPrompt('Play this note on the piano. Any octave counts.');
 }
@@ -114,7 +111,7 @@ export function onNote(midi) {
       setPrompt(`That’s it: ${name}.`, 'good');
     }
     renderStats();
-    $('quiz-staff').querySelector('.notehead')?.classList.add('good');
+    q.el?.classList.add('right');
     advanceTimer = setTimeout(next, 900);
   } else {
     kb.flash(midi, 'wrong', 500);
@@ -131,34 +128,13 @@ export function onNote(midi) {
   }
 }
 
-function drawStaff({ clef, dia, acc }) {
-  const y = (d) => BOTTOM - (d - clef.bottom) * (SPACE / 2);
-  const parts = [];
-  for (let i = 0; i < 5; i++) {
-    parts.push(`<line class="staff-line" x1="10" x2="250" y1="${TOP + i * SPACE}" y2="${TOP + i * SPACE}"/>`);
-  }
-  // Ledger lines sit on even steps from the staff's bottom/top line.
-  const top = clef.bottom + 8;
-  for (let d = clef.bottom - 2; d >= dia; d -= 2) parts.push(ledger(y(d)));
-  for (let d = top + 2; d <= dia; d += 2) parts.push(ledger(y(d)));
-
-  const glyphSize = SPACE * 4;
-  parts.push(`<text class="clef" x="16" y="${y(clef.glyphLine)}" font-size="${glyphSize}">${clef.glyph}</text>`);
-
-  const ny = y(dia);
-  const stemUp = dia < clef.bottom + 4; // below the middle line: stem up
-  parts.push(stemUp
-    ? `<line class="stem" x1="${NOTE_X + 6.6}" x2="${NOTE_X + 6.6}" y1="${ny - 1}" y2="${ny - 3.5 * SPACE}"/>`
-    : `<line class="stem" x1="${NOTE_X - 6.6}" x2="${NOTE_X - 6.6}" y1="${ny + 1}" y2="${ny + 3.5 * SPACE}"/>`);
-  parts.push(`<ellipse class="notehead" cx="${NOTE_X}" cy="${ny}" rx="7.4" ry="5.4" transform="rotate(-20 ${NOTE_X} ${ny})"/>`);
-  if (acc) {
-    parts.push(`<text class="accidental" x="${NOTE_X - 24}" y="${ny + 5}" font-size="${SPACE * 1.6}">${acc > 0 ? '♯' : '♭'}</text>`);
-  }
-  return `<svg viewBox="0 0 260 150" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
-}
-
-function ledger(y) {
-  return `<line class="staff-line" x1="${NOTE_X - 13}" x2="${NOTE_X + 13}" y1="${y}" y2="${y}"/>`;
+/** Draw the note with VexFlow, the same engine as the rest of the sheet music. */
+function drawStaff({ clefName, dia, acc }) {
+  const name = diatonicName(dia, acc).replace('♯', '#').replace('♭', 'b');
+  const piece = { id: 'quiz', key: 'C', time: '4/4', [clefName === 'treble' ? 'rh' : 'lh']: `${name}:4` };
+  const score = buildScore(piece);
+  renderScore($('quiz-staff'), score, { showTime: false, center: true });
+  q.el = Object.values(score.hands)[0][0].el;
 }
 
 function recordAnswer(right) {

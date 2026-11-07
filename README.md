@@ -6,11 +6,13 @@ A piano-learning website that runs entirely in the browser. It has no build step
 
 | Section | What it does |
 | --- | --- |
-| **Learn to read** | An 11-chapter path through reading sheet music: the staff, the clefs, ledger lines, the grand staff, note lengths, rests, time signatures, accidentals, key signatures and reading tips. Each chapter has examples you can listen to and a link to practise that skill. |
-| **Sheet music** | Beginner exercises and songs through to intermediate pieces, drawn as real notation. There's also a **random sheet** you can configure (clef, major or minor keys with up to 4 ♯/♭, range up to 4 ledger lines, simple or varied rhythm, 4/4 or 3/4, chords, extra accidentals) and a **weak notes** sheet built from your mistakes. There are two modes:<br>• **Play it**: play the highlighted notes on the piano. The music waits for you. You can practise either hand or both; the other hand plays along.<br>• **Name the notes**: a reading test. Type each note's name (`C`, `F#`, `Bb`…) or tap the on-screen buttons. It's untimed by default, or set a 1- or 2-minute **speed test**, which keeps loading new sheets and reports correct notes per minute. |
+| **Learn to read** | A 12-chapter path through reading sheet music: the staff, the clefs, ledger lines, the grand staff, note lengths, rests, time signatures, accidentals, key signatures, fingering/ties/dynamics/repeats, and reading tips. Each chapter has examples you can listen to and a link to practise that skill. |
+| **Sheet music** | Beginner exercises and songs through to intermediate pieces, drawn as real notation. There's also a **random sheet** you can configure (clef, major or minor keys with up to 4 ♯/♭, range up to 4 ledger lines, simple or varied rhythm, 4/4 or 3/4, chords, extra accidentals) and a **weak notes** sheet built from your mistakes. There are three modes:<br>• **Play it**: play the notes on the piano. The music waits for you. Keyboard **hints** can always show, fade out after three clean notes in a row, or stay off so you really read; they come back if you miss the same note twice. You can practise either hand or both; the other hand plays along.<br>• **At tempo**: a one-bar count-in, then play along with an optional metronome. Each note is scored on time, early, late or missed, adjusted for audio latency, and you find out whether you tend to rush or drag.<br>• **Name the notes**: a reading test. Type each note's name (`C`, `F#`, `Bb`…) or tap the on-screen buttons. It's untimed by default, or set a 1- or 2-minute **speed test**, which keeps loading new sheets and reports correct notes per minute. |
 | **Note quiz** | One note at a time on the treble or bass staff. You answer on the piano. |
+| **Ear training** | **Find the note** (after a reference C), **name the interval** (up, down or together, in three difficulty levels, with a familiar song for each interval), and **play it back** (3–5 note melodies). |
 | **Scales & chords** | Scales and chords on any root, correctly spelled (D harmonic minor ends in C♯, not D♭), highlighted on the keyboard and playable. |
 | **Free play** | The piano on its own. |
+| **Progress** | Today's notes against a daily goal, your streak, a 5-week practice calendar, a heatmap of accuracy for every note on the treble and bass staves, and correct notes per minute over time (with a table view). The top bar shows today's goal and your streak on every page. |
 
 **Spaced repetition:** every note you name in a reading test or the note quiz is recorded per clef. Notes you miss, or answer slowly, are chosen more often in random sheets and the quiz, and they make up the *weak notes* sheet. Notes you know well come up less often.
 
@@ -20,7 +22,7 @@ A piano-learning website that runs entirely in the browser. It has no build step
 - **Computer keyboard**: `A`–`;` for the white keys, `W E T Y U O P` for the black keys, and `Z`/`X` to change octave
 - **A MIDI keyboard**: press *Connect MIDI* (Chrome and Edge). A MIDI sustain pedal works too.
 
-**Sound** is a sampled Yamaha C5 grand: the [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), about 2 MB, with a built-in synth while it loads. Hold **Space** for the sustain pedal, or click *Pedal* to keep it down.
+**Sound** is a sampled Yamaha C5 grand: the [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), recorded at **three dynamic levels**, so soft notes really sound softer and darker. The medium layer (about 2.3 MB) loads first and the piano is playable as soon as it's in; the soft and loud layers follow in the background, about 6.9 MB in total. The built-in synth plays until then. Dynamics in the music (*p*, *mf*, *f*…) change how hard playback strikes the keys. Hold **Space** for the sustain pedal, or click *Pedal* to keep it down.
 
 Sheet music is drawn with [VexFlow](https://www.vexflow.com) (MIT licence), which is included in `site/vendor/`. All progress is stored in your browser.
 
@@ -32,8 +34,12 @@ site/                 ← everything that gets published
   css/style.css
   js/                 ← ES modules (main.js is the entry point)
     pieces.js         ← sheet-music library
+    sheet.js          ← parsing and drawing notation (VexFlow)
+    sheetpractice.js  ← play-along, at-tempo and name-the-notes modes
     generator.js      ← random and weak-note sheets
-    stats.js          ← per-note spaced-repetition statistics
+    stats.js          ← per-note spaced-repetition statistics, daily goal, streak, speed history
+    ear.js            ← ear training
+    progress.js       ← progress page
     learn.js          ← "Learn to read" chapters
   samples/salamander/ ← piano samples (CC BY 3.0)
   vendor/             ← VexFlow
@@ -44,7 +50,19 @@ Dockerfile, nginx.conf, compose.yaml   ← local hosting with Docker
 
 ### Adding a piece
 
-Add an entry to `PIECES` in [site/js/pieces.js](site/js/pieces.js). Notes are written as `Name+Octave:beats`, for example `C4` (one beat), `G4:2` (two beats), `F#5:0.5` (an eighth note), `R:1` (a rest) or `C3+E3+G3:4` (a chord). `|` marks bar lines; it's optional and only there to make the notes easier to read. `rh` is drawn on the treble staff and `lh` on the bass staff.
+Add an entry to `PIECES` in [site/js/pieces.js](site/js/pieces.js). `rh` is drawn on the treble staff and `lh` on the bass staff. The note format:
+
+| Write | Means |
+| --- | --- |
+| `C4`, `G4:2`, `F#5:0.5`, `Bb3:1.5` | a note and its length in beats (default 1; 0.5 is an eighth, 1.5 a dotted quarter) |
+| `R:1` | a rest |
+| `C3+E3+G3:4` | a chord |
+| `E4@3`, `C3+E3+G3@5+3+1` | fingering (1 is the thumb) |
+| `C4:2~ C4:4` | a tie: the first note is held into the second |
+| `!mf` | a dynamic marking (`pp p mp mf f ff`) for the notes that follow |
+| `\|` | a bar line (optional, only for readability) |
+
+Add `repeat: true` to play the whole piece twice behind repeat signs, and `pickup: 1` for a one-beat pickup bar.
 
 ## Run locally
 
@@ -72,7 +90,7 @@ npm install
 npm test
 ```
 
-The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
+The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also check the new features: keyboard hints, timing scores (a robot player hits notes on the beat and deliberately skips some), notation (fingering, ties, dynamics, repeats), ear training and the progress page. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
 
 ## Deploy to GitHub Pages
 

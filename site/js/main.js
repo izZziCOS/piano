@@ -7,9 +7,11 @@ import * as quiz from './quiz.js';
 import * as scales from './scales.js';
 import * as learn from './learn.js';
 import * as sheet from './sheetpractice.js';
+import * as ear from './ear.js';
+import * as progress from './progress.js';
 
 const $ = (id) => document.getElementById(id);
-const modes = { learn, sheet, quiz, scales, play };
+const modes = { learn, sheet, quiz, ear, scales, play, progress };
 const ALIASES = { lessons: 'sheet' }; // old links
 let current = null;
 
@@ -19,7 +21,7 @@ const keyboard = new Keyboard($('keyboard'));
 keyboard.build();
 requestAnimationFrame(() => keyboard.reveal(60, { center: true, smooth: false }));
 
-for (const m of Object.values(modes)) m.init(keyboard);
+for (const m of Object.values(modes)) m.init?.(keyboard);
 keyboard.on('noteon', (midi) => modes[current]?.onNote?.(midi));
 
 // --- Routing: #learn, #sheet, #sheet/<piece-id>?mode=name, #quiz, #scales, #play ---

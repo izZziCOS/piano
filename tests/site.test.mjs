@@ -83,7 +83,7 @@ const clickKey = async (page, midi) => {
 
 test('every section opens', async () => {
   const page = await open('#learn');
-  for (const view of ['learn', 'sheet', 'quiz', 'scales', 'play']) {
+  for (const view of ['learn', 'sheet', 'quiz', 'ear', 'scales', 'play', 'progress']) {
     await page.goto(base + '#' + view);
     await wait(150);
     assert.equal(await page.$eval(`#view-${view}`, (e) => e.hidden), false, `#view-${view} visible`);
@@ -110,7 +110,7 @@ test('piano samples load', async () => {
   page.on('response', (r) => { if (r.url().endsWith('.mp3')) mp3.push(r.status()); });
   await page.goto(base + '#play', { waitUntil: 'networkidle0' });
   await wait(500);
-  assert.equal(mp3.length, 30, '30 samples requested');
+  assert.equal(mp3.length, 90, '30 notes × 3 dynamic layers requested');
   assert.ok(mp3.every((s) => s === 200), 'all samples served');
   assert.equal(await text(page, '#sound-status'), '', 'no loading/failed message once loaded');
   await page.close();
@@ -264,7 +264,7 @@ test('scales and chords are spelled correctly', async () => {
 test('every Learn chapter renders its examples', async () => {
   const page = await open('#learn');
   const chapters = await page.$$eval('#learn-toc button', (b) => b.length);
-  assert.equal(chapters, 11);
+  assert.equal(chapters, 12);
   for (let i = 0; i < chapters; i++) {
     await page.click(`#learn-toc button[data-i="${i}"]`);
     await wait(80);
@@ -293,6 +293,138 @@ test('phone layout has no sideways scrolling', async () => {
     assert.ok(overflow <= 0, `${hash} overflows by ${overflow}px`);
     await page.close();
   }
+});
+
+test('keyboard hints can be turned off and come back when stuck', async () => {
+  const page = await open('#sheet/rh-c-position?mode=play');
+  await page.select('#sheet-hints', 'off');
+  await wait(100);
+  assert.equal(await page.$$eval('.key.target', (k) => k.length), 0, 'no hint with hints off');
+  await clickKey(page, 62); // wrong (expects C4)
+  assert.equal(await page.$$eval('.key.target', (k) => k.length), 0, 'still no hint after one miss');
+  assert.doesNotMatch(await text(page, '#sheet-status'), /Next: C4/);
+  await clickKey(page, 64); // second miss
+  assert.deepEqual(await page.$$eval('.key.target', (k) => k.map((x) => +x.dataset.midi)), [60], 'hint shown after two misses');
+
+  // Fade: hints disappear after three clean notes in a row.
+  await page.select('#sheet-hints', 'fade');
+  await page.click('#sheet-restart');
+  await wait(100);
+  for (const m of [60, 62, 64]) {
+    assert.equal(await page.$$eval('.key.target', (k) => k.length), 1, 'hint visible while learning');
+    await clickKey(page, m);
+  }
+  await wait(100);
+  assert.equal(await page.$$eval('.key.target', (k) => k.length), 0, 'hint faded after 3 in a row');
+  await page.close();
+});
+
+test('at-tempo mode scores timing, including missed notes', async () => {
+  const page = await open('#sheet/rh-c-position?mode=tempo');
+  await page.select('#sheet-hints', 'always');
+  await page.$eval('#sheet-tempo', (e) => { e.value = 140; e.dispatchEvent(new Event('input')); });
+  // A robot player: press each key the moment its hint appears, but skip every 6th note.
+  await page.evaluate(() => {
+    let n = 0;
+    new MutationObserver((muts) => {
+      // classList.remove() queues a record even when nothing changes, so look at each key once per batch.
+      const fresh = new Set(muts.filter((m) => !(m.oldValue ?? '').includes('target')).map((m) => m.target));
+      for (const k of fresh) {
+        if (!k.classList.contains('target')) continue;
+        if (++n % 6 === 0) continue;
+        k.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, button: 0 }));
+        setTimeout(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9 })), 50);
+      }
+    }).observe(document.getElementById('keyboard'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  });
+  await page.click('#sheet-start');
+  await page.waitForFunction(() => !document.getElementById('sheet-result').hidden, { timeout: 20000 });
+  const result = await text(page, '#sheet-result');
+  const num = (re) => +(result.match(re)?.[1] ?? -1);
+  const ontime = num(/(\d+) on time/);
+  const missed = num(/(\d+) missed/);
+  assert.ok(missed >= 2, `skipped notes count as missed (${result})`);
+  assert.ok(ontime >= 10, `notes played on the beat count as on time (${result})`);
+  assert.doesNotMatch(result, /wrong/, 'no wrong notes were played');
+  assert.ok(await page.$$eval('#sheet .vf-stavenote.missed', (n) => n.length) >= 2, 'missed notes marked red');
+  await page.close();
+});
+
+test('notation: fingering, ties, dynamics and repeats', async () => {
+  const page = await open('#sheet/rh-c-position?mode=play');
+  const svgText = await page.$$eval('#sheet svg text', (t) => t.map((x) => x.textContent));
+  assert.ok(['1', '2', '3', '4', '5'].every((f) => svgText.includes(f)), 'finger numbers drawn');
+  assert.ok(svgText.includes('mf'), 'dynamic drawn');
+  await page.goto(base + '#sheet/ode-full?mode=play');
+  await wait(200);
+  assert.ok(await page.$$eval('#sheet .vf-stavetie', (t) => t.length) >= 1, 'tie drawn');
+  // A tied note is one note: the reading test asks for it once.
+  await page.goto(base + '#sheet/minuet-g?mode=name');
+  await wait(200);
+  assert.match(await text(page, '#sheet-score'), /45 left/, 'repeated section is named once (45 noteheads)');
+  await page.close();
+});
+
+test('note quiz is drawn with VexFlow', async () => {
+  const page = await open('#quiz');
+  assert.equal(await page.$$eval('#quiz-staff .vf-stavenote', (n) => n.length), 1);
+  assert.equal(await page.$$eval('#quiz-staff .vf-clef', (n) => n.length), 1);
+  await page.close();
+});
+
+test('ear training: intervals, notes and melodies', async () => {
+  const page = await open('#ear');
+  await page.select('#ear-type', 'interval');
+  await wait(100);
+  const buttons = await page.$$('#ear-answers button');
+  for (const b of buttons) {
+    await b.click();
+    if (/Correct|That’s it/.test(await text(page, '#ear-status'))) break;
+  }
+  assert.match(await text(page, '#ear-status'), /Correct|That’s it/);
+  assert.equal(await text(page, '#ear-score'), /That’s it/.test(await text(page, '#ear-status')) ? '0 / 1' : '1 / 1');
+
+  await page.select('#ear-type', 'melody');
+  await wait(100);
+  await page.click('#ear-reveal');
+  const notes = await page.$$eval('.key.target', (k) => k.map((x) => +x.dataset.midi));
+  assert.ok(notes.length >= 1, 'answer shown on the keyboard');
+  const melody = (await text(page, '#ear-status')).match(/melody: (.*)\. Play/)[1].split(' ');
+  assert.equal(melody.length, 3);
+  await page.close();
+});
+
+test('progress page: goal, calendar, heatmap and speed chart', async () => {
+  const page = await open('#sheet/rh-c-position?mode=name');
+  await page.focus('#sheet-answer');
+  for (const k of 'cdefg') { await page.keyboard.press(k); await wait(550); }
+  assert.match(await text(page, '#goal-chip'), /^5\/50/, 'top-bar goal counts answers');
+  // Seed a few speed tests so the chart has data.
+  await page.evaluate(() => {
+    const all = JSON.parse(localStorage.getItem('piano-practice:v1'));
+    all.speedHistory = [
+      { at: Date.now() - 3 * 864e5, npm: 18, accuracy: 80, seconds: 60 },
+      { at: Date.now() - 2 * 864e5, npm: 24, accuracy: 85, seconds: 60 },
+      { at: Date.now() - 864e5, npm: 31, accuracy: 92, seconds: 60 },
+    ];
+    localStorage.setItem('piano-practice:v1', JSON.stringify(all));
+  });
+  await page.goto(base + '#progress');
+  await wait(300);
+  assert.equal(await text(page, '#goal-today'), '5');
+  assert.equal(await page.$$eval('#calendar .day:not(.pad)', (d) => d.length), 35);
+  assert.equal(await page.$$eval('#calendar .day.l1', (d) => d.length), 1, 'today shows some practice');
+  assert.equal(await page.$$eval('#heat-treble .vf-stavenote.heat', (n) => n.length), 5, 'five notes coloured');
+  assert.ok(await page.$$eval('#heat-treble .vf-stavenote.unseen', (n) => n.length) > 10);
+  assert.equal(await page.$$eval('#speed-chart .dot', (d) => d.length), 3);
+  const hit = await page.$('#speed-chart .hit');
+  await hit.evaluate((e) => e.scrollIntoView({ block: 'center' })); // keep it clear of the piano dock
+  const box = await hit.boundingBox();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2);
+  await wait(50);
+  assert.match(await text(page, '#chart-tip'), /31 correct notes\/min/);
+  assert.equal(await page.$$eval('#speed-table tbody tr', (r) => r.length), 3, 'table view');
+  await page.close();
 });
 
 test('no console errors, failed requests or warnings anywhere', () => {

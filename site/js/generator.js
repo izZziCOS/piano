@@ -115,7 +115,23 @@ function line(clefName, key, opts, barLen) {
     }
     tokens.push('|');
   }
+  if (opts.rhythm === 'varied') addTies(tokens);
   return tokens.join(' ');
+}
+
+/** Now and then, tie the last note of a bar into a repeat of it at the start of the next. */
+function addTies(tokens) {
+  for (let i = 1; i < tokens.length - 1; i++) {
+    if (tokens[i] !== '|' || Math.random() > 0.2) continue;
+    const prev = tokens[i - 1];
+    const nextIdx = i + 1;
+    const next = tokens[nextIdx];
+    if (!next || next === '|' || prev.startsWith('R') || next.startsWith('R') || prev.includes('+') || next.includes('+')) continue;
+    const [prevNote] = prev.split(':');
+    const nextBeats = next.split(':')[1];
+    tokens[i - 1] = `${prev}~`;
+    tokens[nextIdx] = `${prevNote}:${nextBeats}`;
+  }
 }
 
 /** Build a random piece from settings (see DEFAULTS). */

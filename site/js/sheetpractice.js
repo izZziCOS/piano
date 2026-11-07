@@ -1,7 +1,10 @@
-// Sheet music practice. Two modes:
-//  - play: play the highlighted notes on the piano; the music waits for you.
-//  - name: a reading test; type the name of each highlighted note (e.g. F, F#, Bb).
-//    Optionally timed. Every answer feeds the spaced-repetition stats.
+// Sheet music practice. Three modes:
+//  - play:  play the notes on the piano; the music waits for you. Keyboard
+//           hints can be always on, fade out as you get notes right, or off.
+//  - tempo: play along in time after a count-in; every note is scored as on
+//           time, early, late or missed.
+//  - name:  a reading test; type the name of each highlighted note (e.g. F, F#, Bb).
+//           Optionally timed. Every answer feeds the spaced-repetition stats.
 import { PIECES } from './pieces.js';
 import { buildScore, renderScore } from './sheet.js';
 import { randomSheet, weakSheet, DEFAULTS, isMinor } from './generator.js';
@@ -31,6 +34,11 @@ let idx = 0;
 let hit = new Set();
 let mistakes = 0;
 let done = false;
+let cleanStreak = 0; // correct steps in a row without a wrong note (for fading hints)
+let stepMistakes = 0;
+
+// tempo mode
+let tempo = null; // { expected[], wrong, stopAudio, timers[], spb }
 
 // name mode
 let items = [];
@@ -64,6 +72,14 @@ export function init(keyboard) {
     store.set('sheetTimer', +$('sheet-timer').value);
     restart();
   });
+  $('sheet-hints').value = store.get('sheetHints', 'always');
+  $('sheet-hints').addEventListener('change', () => {
+    store.set('sheetHints', $('sheet-hints').value);
+    showCurrent();
+  });
+  $('sheet-metronome').checked = store.get('sheetMetronome', true);
+  $('sheet-metronome').addEventListener('change', () => store.set('sheetMetronome', $('sheet-metronome').checked));
+  $('sheet-start').addEventListener('click', () => (tempo?.running ? restart() : startTempo()));
   $('sheet-listen').addEventListener('click', toggleListen);
   $('sheet-restart').addEventListener('click', restart);
   $('sheet-new').addEventListener('click', () => load(piece.id));
@@ -125,7 +141,7 @@ export function enter(param) {
     }
     if (changed) store.set('builder', builderSettings());
     const m = query.get('mode');
-    if (m === 'name' || m === 'play') {
+    if (m === 'name' || m === 'play' || m === 'tempo') {
       mode = m;
       document.querySelector(`input[name="sheet-mode"][value="${mode}"]`).checked = true;
     }
@@ -136,6 +152,7 @@ export function enter(param) {
 
 export function exit() {
   stop();
+  stopTempo();
   clearTimeout(autoTimer);
   clearInterval(clock);
   kb.clear('target');
@@ -148,11 +165,12 @@ const timerSeconds = () => (mode === 'name' ? +$('sheet-timer').value : 0);
 function renderList() {
   const played = store.get('pieces', {});
   const named = store.get('piecesNamed', {});
+  const timed = store.get('piecesTempo', {});
   const levels = [...new Set(PIECES.map((p) => p.level))];
   $('sheet-list').innerHTML = levels.map((level) => `
     <li class="group-label">${level}</li>
     ${PIECES.filter((p) => p.level === level).map((p) => {
-      const best = (mode === 'name' ? named : played)[p.id] ?? 0;
+      const best = ({ name: named, tempo: timed }[mode] ?? played)[p.id] ?? 0;
       const tag = p.generated ? 'New every time' : p.rh && p.lh ? 'Both hands' : p.rh ? 'Right hand' : 'Left hand';
       const current = piece === p ? ' aria-current="true"' : '';
       const starsHtml = p.generated ? '' : `<span class="stars${best ? '' : ' empty'}" aria-label="${best} of 3 stars">${stars(best)}</span>`;
@@ -167,6 +185,7 @@ function load(id, { keepSession = false } = {}) {
   piece = PIECES.find((p) => p.id === id) ?? PIECES[0];
   store.set('sheetPiece', piece.id);
   stop();
+  stopTempo();
   clearTimeout(autoTimer);
   $('sheet-builder').hidden = piece.generated !== 'random';
   $('sheet-new').hidden = !piece.generated;
@@ -247,8 +266,8 @@ function paint(playing = -1) {
   }
   score.steps.forEach((s, i) => {
     for (const e of s.events) {
-      e.el?.classList.remove('right', 'missed');
-      e.el?.classList.toggle('done', playing < 0 && i < idx);
+      if (mode !== 'tempo') e.el?.classList.remove('right', 'missed', 'close');
+      e.el?.classList.toggle('done', playing < 0 && i < idx && mode !== 'tempo');
       e.el?.classList.toggle('current', playing < 0 ? i === idx && !done : i === playing);
     }
   });
@@ -275,6 +294,7 @@ function setStatus(text, tone = '') {
 function restart({ keepSession = false } = {}) {
   if (!score) return;
   stop();
+  stopTempo();
   clearTimeout(autoTimer);
   done = false;
   busy = false;
@@ -282,26 +302,44 @@ function restart({ keepSession = false } = {}) {
   $('sheet-box').scrollTop = 0;
   kb.clear('target');
   if (mode === 'name') startNaming(keepSession);
+  else if (mode === 'tempo') { clearInterval(clock); readyTempo(); }
   else { clearInterval(clock); startPlaying(); }
 }
 
 // ---------------------------------------------------------------- play mode
 
+const hintMode = () => $('sheet-hints').value;
+/** Should the keyboard light up the next notes? */
+function hintsVisible() {
+  if (stepMistakes >= 2) return true; // stuck: help out
+  if (hintMode() === 'always') return true;
+  if (hintMode() === 'fade') return cleanStreak < 3;
+  return false;
+}
+
 function startPlaying() {
   idx = 0;
   mistakes = 0;
-  setStatus(`Play the highlighted notes (${HAND_LABEL[hands].toLowerCase()}). The music waits for you.`);
+  cleanStreak = 0;
+  stepMistakes = 0;
+  const how = hintMode() === 'off'
+    ? 'Read the notes and play them, with no keyboard hints.'
+    : hintMode() === 'fade'
+      ? 'Keyboard hints fade out once you get three notes right in a row.'
+      : 'Play the highlighted notes.';
+  setStatus(`${how} (${HAND_LABEL[hands]}.) The music waits for you.`);
   enterStep();
 }
 
 function enterStep() {
   clearTimeout(autoTimer);
   hit = new Set();
+  stepMistakes = 0;
   if (idx >= score.steps.length) return finishPlaying();
   const step = score.steps[idx];
   const others = step.events.filter((e) => !isRequired(e));
   if (others.length) {
-    audio.playNotes(others.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.beats }))), bpm());
+    audio.playNotes(others.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.play, velocity: e.vel * 0.85 }))), bpm());
   }
   showCurrent();
   if (!required(step).length) {
@@ -318,30 +356,43 @@ function showCurrent() {
     scrollSheetTo(items[qi]?.event.el);
     return;
   }
+  if (mode === 'tempo') return;
   if (idx >= score.steps.length) return;
   const req = required(score.steps[idx]);
-  kb.mark(req, 'target');
-  kb.reveal(req);
+  if (hintsVisible()) {
+    kb.mark(req, 'target');
+    kb.reveal(req);
+  }
   scrollSheetTo(score.steps[idx].events.find((e) => e.el)?.el);
 }
 
 export function onNote(midi) {
+  if (mode === 'tempo') return onTempoNote(midi);
   if (mode !== 'play' || !score || done || stopListen || idx >= score.steps.length) return;
   const req = required(score.steps[idx]);
   if (!req.length) return;
   if (req.includes(midi)) {
     kb.flash(midi, 'correct');
+    if (!hit.has(midi)) stats.logPractice(1);
     hit.add(midi);
     if (req.every((m) => hit.has(m))) {
+      cleanStreak = stepMistakes ? 0 : cleanStreak + 1;
       setStatus('');
       idx++;
       enterStep();
     }
   } else {
     mistakes++;
+    stepMistakes++;
+    cleanStreak = 0;
     kb.flash(midi, 'wrong');
-    const want = req.filter((m) => !hit.has(m)).map((m) => noteName(m)).join(' + ');
-    setStatus(`That was ${noteName(midi)}. Next: ${want}.`, 'bad');
+    if (hintsVisible()) {
+      const want = req.filter((m) => !hit.has(m)).map((m) => noteName(m)).join(' + ');
+      setStatus(`That was ${noteName(midi)}. Next: ${want}.`, 'bad');
+      showCurrent();
+    } else {
+      setStatus(`That was ${noteName(midi)}. Read the note again.`, 'bad');
+    }
   }
 }
 
@@ -359,7 +410,7 @@ function finishPlaying() {
 function startNaming(keepSession) {
   // One question per notehead: in time order, treble before bass, chords low to high.
   items = [];
-  for (const step of score.steps) {
+  for (const step of score.steps.filter((st) => st.pass === 1)) { // name each note once, even if the piece repeats
     const events = step.events.filter(isRequired).sort((a, b) => (a.hand === b.hand ? 0 : a.hand === 'rh' ? -1 : 1));
     for (const event of events) {
       event.items = event.names
@@ -508,6 +559,7 @@ function finishNaming() {
     const best = store.get('bestSpeed', {});
     const isBest = npm > (best[key] ?? 0);
     if (isBest) store.set('bestSpeed', { ...best, [key]: npm });
+    stats.recordSpeed({ npm, accuracy, seconds: s.timer, piece: piece.id });
     detail = `${npm} correct notes per minute${isBest ? ' · new record' : ` · best ${best[key]}`} · ${accuracy}% accuracy`;
   }
   if (s.missed.length) {
@@ -529,7 +581,7 @@ function showResult({ accuracy, detail, extra = '', rate = true }) {
   const earned = accuracy >= 95 ? 3 : accuracy >= 80 ? 2 : 1;
   let isBest = false;
   if (rate && !piece.generated) {
-    const key = mode === 'name' ? 'piecesNamed' : 'pieces';
+    const key = { name: 'piecesNamed', tempo: 'piecesTempo' }[mode] ?? 'pieces';
     const progress = store.get(key, {});
     isBest = earned > (progress[piece.id] ?? 0);
     if (isBest) store.set(key, { ...progress, [piece.id]: earned });
@@ -559,8 +611,9 @@ function toggleListen() {
   $('sheet-listen').textContent = 'Stop';
   const steps = score.steps.map((s) => ({
     beats: s.beats,
-    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.beats }))),
+    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.play, velocity: e.vel }))),
   }));
+  stopTempo();
   stopListen = audio.playSequence(steps, {
     bpm: bpm(),
     onStep: (i, dur) => {
@@ -580,4 +633,141 @@ function stop() {
   $('sheet-listen').textContent = 'Listen';
   kb.clear('demo');
   showCurrent();
+}
+
+// ---------------------------------------------------------------- tempo mode
+
+function readyTempo() {
+  idx = 0;
+  paint();
+  setStatus('Press Start. You’ll hear one bar of clicks, then play along in time. The other hand plays itself.');
+  $('sheet-start').textContent = '▶ Start';
+}
+
+function startTempo() {
+  if (!score) return;
+  stop();
+  stopTempo();
+  $('sheet-result').hidden = true;
+  for (const evs of Object.values(score.hands)) for (const e of evs) e.el?.classList.remove('right', 'close', 'missed', 'done');
+  done = false;
+  idx = -1;
+
+  const spb = 60 / bpm();
+  const clickBeats = 4 / score.den; // one click per beat of the time signature
+  const clickSec = clickBeats * spb;
+  const countIn = Math.round(score.barLen / clickBeats);
+  const t0 = audio.now() + 0.25;
+  const musicStart = t0 + countIn * clickSec;
+  const last = score.steps[score.steps.length - 1];
+  const totalBeats = last.time + last.beats;
+
+  const clicks = [];
+  for (let k = 0; k < countIn; k++) clicks.push({ at: t0 + k * clickSec, accent: k === 0 });
+  if ($('sheet-metronome').checked) {
+    for (let k = 0; k * clickBeats < totalBeats - 1e-6; k++) {
+      const beat = k * clickBeats - score.pickup;
+      const accent = Math.abs(((beat % score.barLen) + score.barLen) % score.barLen) < 1e-6;
+      clicks.push({ at: musicStart + k * clickSec, accent });
+    }
+  }
+  const notes = score.steps.flatMap((st) => st.events.filter((e) => !isRequired(e)).flatMap((e) =>
+    e.midis.map((midi) => ({ midi, at: musicStart + st.time * spb, dur: e.play * spb, velocity: e.vel * 0.85 }))));
+
+  const expected = [];
+  score.steps.forEach((st, i) => {
+    for (const e of st.events.filter(isRequired)) {
+      for (const midi of e.midis) {
+        expected.push({ midi, step: i, event: e, perf: audio.heardAt(musicStart + st.time * spb), result: null, dt: 0 });
+      }
+    }
+  });
+
+  const timers = [];
+  const at = (audioTime, fn) => timers.push(setTimeout(fn, Math.max(0, audio.heardAt(audioTime) - performance.now())));
+  for (let k = 0; k < countIn; k++) at(t0 + k * clickSec, () => setStatus(`Count-in: ${'● '.repeat(k + 1)}${'○ '.repeat(countIn - k - 1)}`));
+  score.steps.forEach((st, i) => at(musicStart + st.time * spb, () => {
+    if (i === 0) setStatus('Play!');
+    idx = i;
+    kb.clear('target');
+    paint();
+    const req = required(st);
+    if (req.length && hintsVisible()) { kb.mark(req, 'target'); kb.reveal(req); }
+    scrollSheetTo(st.events.find((e) => e.el)?.el);
+  }));
+  const window = tempoWindow(spb);
+  timers.push(setTimeout(finishTempo, audio.heardAt(musicStart + totalBeats * spb) - performance.now() + window));
+
+  tempo = { expected, wrong: 0, timers, spb, running: true, stopAudio: audio.schedule({ notes, clicks }) };
+  $('sheet-start').textContent = '■ Stop';
+}
+
+/** How far from the beat a note may be and still count (ms). */
+const tempoWindow = (spb) => Math.max(160, Math.min(350, spb * 1000 * 0.45));
+const onTimeWindow = (spb) => Math.max(70, Math.min(120, spb * 1000 * 0.15));
+
+function onTempoNote(midi) {
+  if (!tempo?.running) return;
+  const t = performance.now();
+  let best = null;
+  for (const x of tempo.expected) {
+    if (x.result || x.midi !== midi) continue;
+    if (!best || Math.abs(t - x.perf) < Math.abs(t - best.perf)) best = x;
+  }
+  if (!best || Math.abs(t - best.perf) > tempoWindow(tempo.spb)) {
+    tempo.wrong++;
+    kb.flash(midi, 'wrong');
+    return;
+  }
+  best.dt = t - best.perf;
+  best.result = Math.abs(best.dt) <= onTimeWindow(tempo.spb) ? 'ontime' : best.dt < 0 ? 'early' : 'late';
+  kb.flash(midi, best.result === 'ontime' ? 'correct' : 'demo');
+  stats.logPractice(1);
+  judgeEvent(best.event);
+}
+
+function judgeEvent(e) {
+  const xs = tempo.expected.filter((x) => x.event === e);
+  if (xs.some((x) => !x.result)) return;
+  e.el?.classList.remove('right', 'close', 'missed');
+  e.el?.classList.add(xs.every((x) => x.result === 'ontime') ? 'right' : xs.some((x) => x.result === 'missed') ? 'missed' : 'close');
+}
+
+function stopTempo() {
+  if (!tempo) return;
+  tempo.timers.forEach(clearTimeout);
+  tempo.stopAudio?.();
+  tempo.running = false;
+  tempo = null;
+  kb.clear('target');
+  $('sheet-start').textContent = '▶ Start';
+}
+
+function finishTempo() {
+  if (!tempo?.running) return;
+  const t = tempo;
+  for (const x of t.expected) if (!x.result) x.result = 'missed';
+  for (const e of new Set(t.expected.map((x) => x.event))) judgeEvent(e);
+  t.running = false;
+  t.timers.forEach(clearTimeout);
+  tempo = null;
+  done = true;
+  idx = -1;
+  kb.clear('target');
+  for (const evs of Object.values(score.hands)) for (const e of evs) e.el?.classList.remove('current');
+  $('sheet-start').textContent = '▶ Start';
+
+  const count = (r) => t.expected.filter((x) => x.result === r).length;
+  const [ontime, early, late, missed] = ['ontime', 'early', 'late', 'missed'].map(count);
+  const points = ontime + 0.6 * (early + late);
+  const accuracy = Math.round((points / Math.max(1, t.expected.length + t.wrong * 0.5)) * 100);
+  const hits = t.expected.filter((x) => x.result !== 'missed');
+  const avg = hits.length ? hits.reduce((a, x) => a + x.dt, 0) / hits.length : 0;
+  const tendency = Math.abs(avg) < 25 ? 'Your timing is centred on the beat.'
+    : `On average you play ${Math.round(Math.abs(avg))} ms ${avg < 0 ? 'early (rushing)' : 'late (dragging)'}.`;
+  showResult({
+    accuracy,
+    detail: `${ontime} on time · ${early} early · ${late} late · ${missed} missed${t.wrong ? ` · ${t.wrong} wrong ${t.wrong === 1 ? 'note' : 'notes'}` : ''}`,
+    extra: `<p class="muted">${tendency} Green notes were on time, gold early or late, red missed.</p>`,
+  });
 }

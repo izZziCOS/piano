@@ -32,19 +32,34 @@ export function parseNote(str) {
 }
 
 /**
- * Parse a melody string such as "E4 D4 C4:2 | R:1 C3+E3+G3:2".
- * ":2" = two beats (default one), "R" = rest, "+" joins a chord, "|" is an
- * optional bar line for readability. Each event: { midis, names, beats, rest, midi }.
+ * Parse a melody string such as "!mf E4@3 D4@2 C4:2~ | C4 R:1 C3+E3+G3@5+3+1:2".
+ *   :2        two beats (default one)       R        rest
+ *   +         joins a chord                  @3       finger number(s), "+"-separated for chords
+ *   ~         tie into the next note         !mf      dynamic marking for the next note
+ *   |         optional bar line, only for readability
+ * Each event: { midis, names, beats, rest, midi, fingers, tie, dynamic }.
  */
 export function parseMelody(str) {
-  return str.trim().split(/\s+/).filter((t) => t !== '|').map((tok) => {
-    const [note, beats] = tok.split(':');
-    const b = beats ? parseFloat(beats) : 1;
-    if (note === 'R') return { midis: [], names: [], beats: b, rest: true, midi: null };
-    const names = note.split('+');
-    const midis = names.map(parseNote);
-    return { midis, names, beats: b, rest: false, midi: midis[0] };
-  });
+  const events = [];
+  let dynamic = null;
+  for (const tok of str.trim().split(/\s+/)) {
+    if (tok === '|' || !tok) continue;
+    if (tok.startsWith('!')) { dynamic = tok.slice(1); continue; }
+    const tie = tok.endsWith('~');
+    const [head, beatsStr] = tok.replace(/~$/, '').split(':');
+    const beats = beatsStr ? parseFloat(beatsStr) : 1;
+    const [notes, fingerStr] = head.split('@');
+    const fingers = fingerStr ? fingerStr.split('+') : [];
+    if (notes === 'R') {
+      events.push({ midis: [], names: [], beats, rest: true, midi: null, fingers: [], tie: false, dynamic });
+    } else {
+      const names = notes.split('+');
+      const midis = names.map(parseNote);
+      events.push({ midis, names, beats, rest: false, midi: midis[0], fingers, tie, dynamic });
+    }
+    dynamic = null;
+  }
+  return events;
 }
 
 /**

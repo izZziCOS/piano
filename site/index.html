@@ -23,9 +23,12 @@
       <a href="#learn" data-view="learn">Learn to read</a>
       <a href="#sheet" data-view="sheet">Sheet music</a>
       <a href="#quiz" data-view="quiz">Note quiz</a>
+      <a href="#ear" data-view="ear">Ear training</a>
       <a href="#scales" data-view="scales">Scales &amp; chords</a>
       <a href="#play" data-view="play">Free play</a>
+      <a href="#progress" data-view="progress">Progress</a>
     </nav>
+    <a id="goal-chip" class="goal-chip" href="#progress" title="Today’s practice goal and streak"></a>
   </header>
 
   <main>
@@ -66,6 +69,7 @@
             </div>
             <div class="segmented" role="radiogroup" aria-label="Practice mode">
               <label><input type="radio" name="sheet-mode" value="play" checked><span>Play it</span></label>
+              <label><input type="radio" name="sheet-mode" value="tempo"><span>At tempo</span></label>
               <label><input type="radio" name="sheet-mode" value="name"><span>Name the notes</span></label>
             </div>
           </div>
@@ -125,9 +129,18 @@
                 <option value="120">2 minutes</option>
               </select>
             </label>
-            <label class="play-only">Tempo <input id="sheet-tempo" type="range" min="40" max="160" step="2" value="90"> <span id="sheet-bpm" class="mono">90</span> bpm</label>
-            <label class="check play-only"><input type="checkbox" id="sheet-names"> Show note names</label>
+            <label class="not-name">Hints
+              <select id="sheet-hints">
+                <option value="always">Always show keys</option>
+                <option value="fade">Fade out as I improve</option>
+                <option value="off">Off (read only)</option>
+              </select>
+            </label>
+            <label class="not-name">Tempo <input id="sheet-tempo" type="range" min="40" max="160" step="2" value="90"> <span id="sheet-bpm" class="mono">90</span> bpm</label>
+            <label class="check tempo-only"><input type="checkbox" id="sheet-metronome"> Metronome</label>
+            <label class="check not-name"><input type="checkbox" id="sheet-names"> Show note names</label>
             <div class="btn-row">
+              <button id="sheet-start" class="btn tempo-only">▶ Start</button>
               <button id="sheet-listen" class="btn btn-ghost">Listen</button>
               <button id="sheet-restart" class="btn btn-ghost">Restart</button>
               <button id="sheet-new" class="btn btn-ghost" hidden>New notes</button>
@@ -150,6 +163,102 @@
           <div id="sheet-result" class="result" hidden></div>
         </div>
       </div>
+    </section>
+
+    <!-- Ear training -->
+    <section id="view-ear" class="view" hidden>
+      <div class="card quiz-card">
+        <div class="quiz-settings">
+          <label>Exercise
+            <select id="ear-type">
+              <option value="note">Find the note</option>
+              <option value="interval">Name the interval</option>
+              <option value="melody">Play it back</option>
+            </select>
+          </label>
+          <label>Level <select id="ear-level"></select></label>
+          <label class="interval-only">Direction
+            <select id="ear-direction">
+              <option value="up">Up</option>
+              <option value="down">Down</option>
+              <option value="together">Together</option>
+              <option value="mixed">Mixed</option>
+            </select>
+          </label>
+          <label class="check note-only"><input type="checkbox" id="ear-reference"> Play C first</label>
+        </div>
+        <div class="ear-stage">
+          <button id="ear-play" class="btn ear-play" aria-label="Play the sound again">▶ Play again</button>
+          <p id="ear-status" class="status" aria-live="polite"></p>
+          <div id="ear-answers" class="ear-answers interval-only"></div>
+        </div>
+        <dl class="stats">
+          <div><dt>Score</dt><dd id="ear-score">0 / 0</dd></div>
+          <div><dt>Streak</dt><dd id="ear-streak">0</dd></div>
+          <div><dt>Best streak</dt><dd id="ear-best">0</dd></div>
+        </dl>
+        <div class="btn-row center">
+          <button id="ear-reveal" class="btn btn-ghost">Show answer</button>
+          <button id="ear-next" class="btn btn-ghost">Skip</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Progress -->
+    <section id="view-progress" class="view" hidden>
+      <div class="progress-grid">
+        <div class="card goal-card">
+          <h2>Today</h2>
+          <p class="goal-big"><strong id="goal-today">0</strong> / <span id="goal-target">50</span> notes</p>
+          <div class="progress big" id="goal-bar"><span></span></div>
+          <p id="goal-message" class="muted small"></p>
+          <label>Daily goal
+            <select id="goal-select">
+              <option value="25">25 notes</option>
+              <option value="50">50 notes</option>
+              <option value="100">100 notes</option>
+              <option value="200">200 notes</option>
+            </select>
+          </label>
+        </div>
+        <div class="card goal-card">
+          <h2>Streak</h2>
+          <p class="goal-big"><strong id="goal-streak">0</strong> <span id="goal-streak-label">days in a row</span></p>
+          <p class="muted small">A day counts once you reach your goal. Every note you name, play or hear in any exercise counts.</p>
+          <dl class="mini-stats">
+            <div><dt>Notes named</dt><dd id="summary-notes">0</dd></div>
+            <div><dt>Accuracy</dt><dd id="summary-accuracy">–</dd></div>
+          </dl>
+        </div>
+        <div class="card calendar-card">
+          <h2>Last 5 weeks</h2>
+          <div class="calendar-head" aria-hidden="true"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+          <div id="calendar" class="calendar"></div>
+          <div class="legend small muted"><span><span class="sw day l0"></span>none</span><span><span class="sw day l1"></span>some</span><span><span class="sw day l2"></span>half the goal</span><span><span class="sw day l3"></span>goal met</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>How well you know each note</h2>
+        <p class="muted small">From the reading tests and the note quiz. Hover over a note for details.</p>
+        <div id="heat-legend" class="legend small"></div>
+        <h3 class="heat-title">Treble clef</h3>
+        <div class="heat-scroll sheet-paper"><div id="heat-treble" class="heat"></div></div>
+        <h3 class="heat-title">Bass clef</h3>
+        <div class="heat-scroll sheet-paper"><div id="heat-bass" class="heat"></div></div>
+        <h3 class="heat-title">Sharps &amp; flats</h3>
+        <div id="heat-accidentals" class="chips"></div>
+        <h3 class="heat-title">Needs practice</h3>
+        <div id="weak-list" class="chips"></div>
+      </div>
+
+      <div class="card">
+        <h2>Reading speed</h2>
+        <p class="muted small">Correct notes per minute in timed “Name the notes” tests.</p>
+        <div id="speed-chart" class="speed-chart"></div>
+        <details class="table-view"><summary>Show as a table</summary><div id="speed-table"></div></details>
+      </div>
+      <p class="center"><button id="progress-reset" class="btn btn-ghost btn-small">Reset note statistics</button></p>
     </section>
 
     <!-- Free play -->
@@ -218,6 +327,8 @@
       </div>
     </section>
   </main>
+
+  <div id="chart-tip" class="chart-tip" role="tooltip" hidden></div>
 
   <section class="piano-dock" aria-label="Piano">
     <div class="piano-toolbar">

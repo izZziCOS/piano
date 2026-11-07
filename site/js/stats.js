@@ -25,6 +25,7 @@ export function record(clef, name, right, ms = 0) {
   s.last = Date.now();
   all()[k] = s;
   save();
+  logPractice(1);
 }
 
 /** Sampling weight: weak or long-unseen notes come up more often. */
@@ -69,4 +70,78 @@ export function pickWeighted(items, weightOf) {
     if (r <= 0) return items[i];
   }
   return items[items.length - 1];
+}
+
+// ------------------------------------------------------------ practice log
+// One entry per day: how many notes were answered or played correctly.
+// Used for the daily goal, the streak and the calendar on the Progress page.
+
+const dayKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const listeners = new Set();
+
+export function onPractice(fn) { listeners.add(fn); }
+
+/** Count `n` practised notes for today (any mode). */
+export function logPractice(n = 1) {
+  const log = store.get('practiceLog', {});
+  const k = dayKey();
+  log[k] = (log[k] ?? 0) + n;
+  store.set('practiceLog', log);
+  listeners.forEach((fn) => fn());
+}
+
+export const getGoal = () => store.get('dailyGoal', 50);
+export function setGoal(n) {
+  store.set('dailyGoal', n);
+  listeners.forEach((fn) => fn());
+}
+
+export function today() {
+  return store.get('practiceLog', {})[dayKey()] ?? 0;
+}
+
+/** Days in a row (ending today, or yesterday if today isn't done yet) that met the goal. */
+export function streak() {
+  const log = store.get('practiceLog', {});
+  const goal = getGoal();
+  const d = new Date();
+  if ((log[dayKey(d)] ?? 0) < goal) d.setDate(d.getDate() - 1);
+  let n = 0;
+  while ((log[dayKey(d)] ?? 0) >= goal) {
+    n++;
+    d.setDate(d.getDate() - 1);
+  }
+  return n;
+}
+
+/** The last `days` days, oldest first: [{ date, notes }]. */
+export function recentDays(days = 35) {
+  const log = store.get('practiceLog', {});
+  const out = [];
+  const d = new Date();
+  d.setDate(d.getDate() - days + 1);
+  for (let i = 0; i < days; i++) {
+    out.push({ date: dayKey(d), notes: log[dayKey(d)] ?? 0 });
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ speed tests
+
+export function recordSpeed(entry) {
+  const list = store.get('speedHistory', []);
+  list.push({ at: Date.now(), ...entry });
+  store.set('speedHistory', list.slice(-200));
+}
+
+export const speedHistory = () => store.get('speedHistory', []);
+
+/** Every note with stats, for the heatmap. */
+export function allNotes() {
+  return Object.entries(all()).map(([k, s]) => {
+    const [clef, name] = k.split(':');
+    return { clef, name, ...s, accuracy: (s.seen - s.missed) / s.seen };
+  });
 }
