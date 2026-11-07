@@ -9,6 +9,7 @@ import * as learn from './learn.js';
 import * as sheet from './sheetpractice.js';
 import * as ear from './ear.js';
 import * as progress from './progress.js';
+import * as sync from './sync.js';
 
 const $ = (id) => document.getElementById(id);
 const modes = { learn, sheet, quiz, ear, scales, play, progress };
@@ -22,6 +23,7 @@ keyboard.build();
 requestAnimationFrame(() => keyboard.reveal(60, { center: true, smooth: false }));
 
 for (const m of Object.values(modes)) m.init?.(keyboard);
+sync.init();
 keyboard.on('noteon', (midi) => modes[current]?.onNote?.(midi));
 
 // --- Routing: #learn, #sheet, #sheet/<piece-id>?mode=name, #quiz, #scales, #play ---

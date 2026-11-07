@@ -1,6 +1,6 @@
 # Piano Practice
 
-A piano-learning website that runs entirely in the browser. It has no build step, no backend and no accounts. Progress is saved in your browser's local storage.
+A piano-learning website that runs entirely in the browser. It has no build step, no backend and no accounts. Progress is saved in your browser's local storage, and can optionally be synced between devices through a private GitHub Gist.
 
 ## What's inside
 
@@ -24,6 +24,8 @@ A piano-learning website that runs entirely in the browser. It has no build step
 
 **Sound** is a sampled Yamaha C5 grand: the [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), recorded at **three dynamic levels**, so soft notes really sound softer and darker. The medium layer (about 2.3 MB) loads first and the piano is playable as soon as it's in; the soft and loud layers follow in the background, about 6.9 MB in total. The built-in synth plays until then. Dynamics in the music (*p*, *mf*, *f*…) change how hard playback strikes the keys. Hold **Space** for the sustain pedal, or click *Pedal* to keep it down.
 
+**Sync between devices (optional):** on the Progress page, paste a GitHub token that has only the **gist** permission ([create one](https://github.com/settings/tokens/new?scopes=gist&description=Piano%20Practice%20sync)). The site keeps your progress in a secret gist called `piano-practice.json` and syncs it when you open the site, every 15 seconds or so while you practise, and when you leave. Use the same token on each device. When two devices practise between syncs, their progress is merged: daily counts and best scores take the higher value, and speed tests and finished chapters are combined. Device settings such as volume aren't synced. The token stays in that browser only. Other pages hosted at the same `github.io` address can read it, so don't give it any other permission.
+
 Sheet music is drawn with [VexFlow](https://www.vexflow.com) (MIT licence), which is included in `site/vendor/`. All progress is stored in your browser.
 
 ## Project layout
@@ -40,6 +42,7 @@ site/                 ← everything that gets published
     stats.js          ← per-note spaced-repetition statistics, daily goal, streak, speed history
     ear.js            ← ear training
     progress.js       ← progress page
+    sync.js           ← optional GitHub Gist sync and merging
     learn.js          ← "Learn to read" chapters
   samples/salamander/ ← piano samples (CC BY 3.0)
   vendor/             ← VexFlow
@@ -90,7 +93,7 @@ npm install
 npm test
 ```
 
-The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also check the new features: keyboard hints, timing scores (a robot player hits notes on the beat and deliberately skips some), notation (fingering, ties, dynamics, repeats), ear training and the progress page. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
+The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also check the new features: keyboard hints, timing scores (a robot player hits notes on the beat and deliberately skips some), notation (fingering, ties, dynamics, repeats), ear training, the progress page, and syncing two devices through a mocked GitHub API. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
 
 ## Deploy to GitHub Pages
 

@@ -59,6 +59,13 @@ export function summary() {
 export function reset() {
   cache = {};
   save();
+  store.set('noteStatsResetAt', Date.now()); // so sync doesn't bring old stats back
+}
+
+/** Re-read everything from storage (after progress was synced from another device). */
+export function reload() {
+  cache = null;
+  listeners.forEach((fn) => fn());
 }
 
 /** Weighted random choice. */
@@ -94,6 +101,7 @@ export function logPractice(n = 1) {
 export const getGoal = () => store.get('dailyGoal', 50);
 export function setGoal(n) {
   store.set('dailyGoal', n);
+  store.set('dailyGoalAt', Date.now()); // the newest choice wins when syncing
   listeners.forEach((fn) => fn());
 }
 

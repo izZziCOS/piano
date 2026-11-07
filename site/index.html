@@ -258,6 +258,30 @@
         <div id="speed-chart" class="speed-chart"></div>
         <details class="table-view"><summary>Show as a table</summary><div id="speed-table"></div></details>
       </div>
+      <div class="card sync-card">
+        <h2>Sync with GitHub</h2>
+        <div id="sync-off">
+          <p class="muted small">Keep your progress (note statistics, practice calendar, speed tests, stars and finished chapters) in a private gist on your GitHub account, so it follows you to other computers and browsers. Settings like volume stay on each device.</p>
+          <ol class="small sync-steps">
+            <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Piano%20Practice%20sync" target="_blank" rel="noopener">Create a GitHub token</a> with only the <strong>gist</strong> permission (the link ticks it for you). Pick an expiry you’re comfortable with.</li>
+            <li>Paste it here and connect. Do the same on your other devices with the same token.</li>
+          </ol>
+          <form id="sync-form" class="sync-form">
+            <label for="sync-token" class="visually-hidden">GitHub token</label>
+            <input id="sync-token" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_…" required>
+            <button class="btn" type="submit">Connect</button>
+          </form>
+          <p class="muted small">The token is stored only in this browser and is sent only to GitHub. Other sites published at the same github.io address could read it, which is why it should have no permission except gists.</p>
+        </div>
+        <div id="sync-on" hidden>
+          <p>Syncing as <strong id="sync-login"></strong> to <a id="sync-gist" target="_blank" rel="noopener">a secret gist</a>. <span id="sync-last" class="muted small"></span></p>
+          <div class="btn-row">
+            <button id="sync-now" class="btn btn-small">Sync now</button>
+            <button id="sync-disconnect" class="btn btn-ghost btn-small">Disconnect this device</button>
+          </div>
+        </div>
+        <p id="sync-status" class="status small" aria-live="polite"></p>
+      </div>
       <p class="center"><button id="progress-reset" class="btn btn-ghost btn-small">Reset note statistics</button></p>
     </section>
 

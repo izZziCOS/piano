@@ -2,6 +2,7 @@
 // accuracy heatmap drawn on the staff, and reading speed over time.
 import * as stats from './stats.js';
 import { buildScore, renderScore } from './sheet.js';
+import * as sync from './sync.js';
 
 const $ = (id) => document.getElementById(id);
 const pretty = (name) => name.replace('#', '♯').replace(/(?<=[A-G])b/, '♭');
@@ -28,6 +29,7 @@ export function init() {
   });
   stats.onPractice(updateChip);
   updateChip();
+  initSync();
   const tip = $('chart-tip');
   document.addEventListener('pointermove', (e) => {
     const t = e.target.closest?.('[data-tip]');
@@ -183,6 +185,38 @@ function renderSpeed() {
   table.innerHTML = `<table><thead><tr><th>Date</th><th>Correct notes/min</th><th>Accuracy</th><th>Length</th></tr></thead><tbody>
     ${history.slice().reverse().map((h) => `<tr><td>${new Date(h.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</td>
       <td>${h.npm}</td><td>${h.accuracy}%</td><td>${h.seconds / 60} min</td></tr>`).join('')}</tbody></table>`;
+}
+
+function initSync() {
+  $('sync-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const button = e.target.querySelector('button');
+    button.disabled = true;
+    try {
+      await sync.connect($('sync-token').value);
+      $('sync-token').value = '';
+    } catch { /* the status line explains */ }
+    button.disabled = false;
+  });
+  $('sync-now').addEventListener('click', () => sync.syncNow());
+  $('sync-disconnect').addEventListener('click', () => sync.disconnect());
+  sync.onStatus((s) => {
+    $('sync-off').hidden = s.connected;
+    $('sync-on').hidden = !s.connected;
+    $('sync-now').disabled = s.busy;
+    if (s.connected) {
+      $('sync-login').textContent = `@${s.login}`;
+      $('sync-gist').href = `https://gist.github.com/${s.login}/${s.gistId}`;
+      $('sync-last').textContent = s.lastSync
+        ? `Last synced ${new Date(s.lastSync).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}.` : '';
+    }
+    $('sync-status').textContent = s.text;
+    $('sync-status').dataset.tone = s.tone;
+    if (s.updated) {
+      updateChip();
+      if (!$('view-progress').hidden) render();
+    }
+  });
 }
 
 function showTip(text, cx, cy) {

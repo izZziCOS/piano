@@ -427,6 +427,88 @@ test('progress page: goal, calendar, heatmap and speed chart', async () => {
   await page.close();
 });
 
+test('progress syncs between two devices through a GitHub gist', async () => {
+  // A fake GitHub API shared by both "devices".
+  const gists = new Map();
+  const calls = [];
+  const mockGitHub = async (page) => {
+    await page.setRequestInterception(true);
+    page.on('request', (r) => {
+      const url = new URL(r.url());
+      if (url.host !== 'api.github.com') { r.continue(); return; }
+      const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept', 'Access-Control-Allow-Methods': 'GET, POST, PATCH' };
+      if (r.method() === 'OPTIONS') { r.respond({ status: 204, headers: cors }); return; }
+      const json = (body) => r.respond({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(body) });
+      calls.push(`${r.method()} ${url.pathname} ${r.headers().authorization}`);
+      const id = url.pathname.split('/')[2];
+      if (url.pathname === '/user') json({ login: 'pianist' });
+      else if (url.pathname === '/gists' && r.method() === 'GET') json([{ id: 'other', files: { 'notes.md': {} } }, ...gists.values()]);
+      else if (url.pathname === '/gists' && r.method() === 'POST') {
+        const body = JSON.parse(r.postData());
+        assert.equal(body.public, false, 'the gist is secret');
+        const gist = { id: `g${gists.size + 1}`, files: body.files };
+        gists.set(gist.id, gist);
+        json(gist);
+      } else if (r.method() === 'GET') json(gists.get(id));
+      else if (r.method() === 'PATCH') { gists.get(id).files = JSON.parse(r.postData()).files; json(gists.get(id)); }
+    });
+  };
+  const seed = (page, data) => page.evaluate((d) => {
+    localStorage.setItem('piano-practice:v1', JSON.stringify({ ...d, volume: d.volume }));
+  }, data);
+  const todayKey = await (async () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const remote = () => JSON.parse(gists.get('g1').files['piano-practice.json'].content).progress;
+
+  // Device A: some old practice, then connect. A new secret gist is created.
+  const a = await open('#progress');
+  await mockGitHub(a);
+  await seed(a, {
+    practiceLog: { '2026-01-01': 30 }, volume: 0.2,
+    noteStats: { 'treble:C4': { seen: 3, missed: 1, box: 1, last: Date.now(), ms: 1000 } },
+  });
+  await a.reload();
+  await wait(200);
+  await a.type('#sync-token', 'ghp_test');
+  await a.click('#sync-form button');
+  await a.waitForFunction(() => /Connected/.test(document.getElementById('sync-status').textContent));
+  assert.ok(!(await a.$eval('#sync-on', (e) => e.hidden)), 'shows the connected state');
+  assert.equal(await text(a, '#sync-login'), '@pianist');
+  assert.deepEqual(remote().practiceLog, { '2026-01-01': 30 });
+  assert.equal(remote().volume, undefined, 'device settings are not synced');
+  assert.ok(calls.every((c) => c.endsWith('Bearer ghp_test')), 'token sent to GitHub');
+
+  // Device B: its own practice today. Connecting finds the same gist and merges both ways.
+  const b = await open('#progress');
+  await mockGitHub(b);
+  await seed(b, {
+    practiceLog: { [todayKey]: 7 },
+    noteStats: { 'bass:F3': { seen: 2, missed: 0, box: 2, last: Date.now(), ms: 900 } },
+  });
+  await b.reload();
+  await wait(200);
+  await b.type('#sync-token', 'ghp_test');
+  await b.click('#sync-form button');
+  await b.waitForFunction(() => /other devices was added/.test(document.getElementById('sync-status').textContent));
+  assert.equal(gists.size, 1, 'no second gist');
+  assert.deepEqual(remote().practiceLog, { '2026-01-01': 30, [todayKey]: 7 }, 'gist has both devices');
+  assert.equal(await b.$$eval('#heat-treble .vf-stavenote.heat', (n) => n.length), 1, "device A's C4 shows on B");
+  assert.equal(await b.$$eval('#heat-bass .vf-stavenote.heat', (n) => n.length), 1);
+  assert.ok(!JSON.stringify(remote()).includes('ghp_'), 'the token is never uploaded');
+  assert.ok(!(await b.evaluate(() => localStorage.getItem('piano-practice:v1'))).includes('ghp_'));
+
+  // Back on A: syncing brings in B's practice today.
+  await a.click('#sync-now');
+  await a.waitForFunction(() => document.getElementById('goal-today').textContent === '7');
+  assert.match(await text(a, '#goal-chip'), /^7\//);
+
+  // Disconnecting forgets the token on that device only.
+  await a.click('#sync-disconnect');
+  assert.ok(!(await a.$eval('#sync-off', (e) => e.hidden)));
+  assert.equal(await a.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:sync')).token), undefined);
+  await a.close();
+  await b.close();
+});
+
 test('no console errors, failed requests or warnings anywhere', () => {
   assert.deepEqual(problems, []);
 });
