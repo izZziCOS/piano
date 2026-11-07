@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piano Practice</title>
+  <meta name="description" content="Learn piano in your browser: play-along lessons, a note-reading quiz, and a scales and chords reference.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Music&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/vexflow-4.2.5.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#learn">
+      <img src="favicon.svg" alt="" width="24" height="24">
+      Piano Practice
+    </a>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#learn" data-view="learn">Learn to read</a>
+      <a href="#sheet" data-view="sheet">Sheet music</a>
+      <a href="#quiz" data-view="quiz">Note quiz</a>
+      <a href="#scales" data-view="scales">Scales &amp; chords</a>
+      <a href="#play" data-view="play">Free play</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Learn to read -->
+    <section id="view-learn" class="view" hidden>
+      <div class="lessons-layout">
+        <aside class="card lesson-list-card">
+          <h2>Learn to read music</h2>
+          <div class="progress" id="learn-progress"><span></span></div>
+          <p class="muted small" id="learn-progress-label"></p>
+          <ol id="learn-toc" class="toc"></ol>
+        </aside>
+        <article class="card learn-panel">
+          <p id="learn-eyebrow" class="eyebrow"></p>
+          <h2 id="learn-title"></h2>
+          <div id="learn-body" class="prose"></div>
+          <div class="btn-row learn-nav">
+            <button id="learn-prev" class="btn btn-ghost">← Back</button>
+            <button id="learn-next" class="btn">Got it, next →</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Sheet music -->
+    <section id="view-sheet" class="view" hidden>
+      <div class="lessons-layout">
+        <aside class="card lesson-list-card">
+          <h2>Sheet music</h2>
+          <ol id="sheet-list" class="lesson-list"></ol>
+        </aside>
+        <div class="card lesson-panel">
+          <div class="lesson-head">
+            <div>
+              <h2 id="sheet-title"></h2>
+              <p id="sheet-meta" class="muted"></p>
+              <p id="sheet-desc" class="sheet-desc"></p>
+            </div>
+            <div class="segmented" role="radiogroup" aria-label="Practice mode">
+              <label><input type="radio" name="sheet-mode" value="play" checked><span>Play it</span></label>
+              <label><input type="radio" name="sheet-mode" value="name"><span>Name the notes</span></label>
+            </div>
+          </div>
+          <fieldset id="sheet-builder" class="builder" hidden>
+            <legend>Random sheet settings</legend>
+            <label>Clef
+              <select id="gen-clef">
+                <option value="treble">Treble</option>
+                <option value="bass">Bass</option>
+                <option value="grand">Grand staff</option>
+              </select>
+            </label>
+            <label>Keys
+              <select id="gen-keys">
+                <option value="c">C / A minor only</option>
+                <option value="easy">Up to 1 ♯ or ♭</option>
+                <option value="medium">Up to 2 ♯ or ♭</option>
+                <option value="hard">Up to 4 ♯ or ♭</option>
+              </select>
+            </label>
+            <label>Mode
+              <select id="gen-mode">
+                <option value="major">Major</option>
+                <option value="minor">Minor</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+            <label>Range
+              <select id="gen-range">
+                <option value="staff">On the staff</option>
+                <option value="ledger">+ 2 ledger lines</option>
+                <option value="wide">+ 4 ledger lines</option>
+              </select>
+            </label>
+            <label>Rhythm
+              <select id="gen-rhythm">
+                <option value="simple">Simple (quarters &amp; halves)</option>
+                <option value="varied">Varied (eighths, dots, rests)</option>
+              </select>
+            </label>
+            <label>Time
+              <select id="gen-time">
+                <option value="4/4">4/4</option>
+                <option value="3/4">3/4</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="gen-chords"> Chords</label>
+            <label class="check"><input type="checkbox" id="gen-accidentals"> Extra accidentals</label>
+          </fieldset>
+          <div id="sheet-controls" class="sheet-controls">
+            <label>Hands <select id="sheet-hands"></select></label>
+            <label class="name-only">Timer
+              <select id="sheet-timer">
+                <option value="0">Off</option>
+                <option value="60">1 minute</option>
+                <option value="120">2 minutes</option>
+              </select>
+            </label>
+            <label class="play-only">Tempo <input id="sheet-tempo" type="range" min="40" max="160" step="2" value="90"> <span id="sheet-bpm" class="mono">90</span> bpm</label>
+            <label class="check play-only"><input type="checkbox" id="sheet-names"> Show note names</label>
+            <div class="btn-row">
+              <button id="sheet-listen" class="btn btn-ghost">Listen</button>
+              <button id="sheet-restart" class="btn btn-ghost">Restart</button>
+              <button id="sheet-new" class="btn btn-ghost" hidden>New notes</button>
+            </div>
+          </div>
+          <div class="name-only answer-row">
+            <label for="sheet-answer">Note name</label>
+            <input id="sheet-answer" class="answer" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="A–G">
+            <span id="sheet-chord-hint" class="muted small"></span>
+            <span id="sheet-score" class="muted small push mono"></span>
+          </div>
+          <div id="sheet-pad" class="name-only answer-pad" aria-label="Answer buttons">
+            <button data-key="C">C</button><button data-key="D">D</button><button data-key="E">E</button><button data-key="F">F</button><button data-key="G">G</button><button data-key="A">A</button><button data-key="B">B</button>
+            <button data-key="#" class="acc" aria-label="sharp">♯</button><button data-key="b" class="acc" aria-label="flat">♭</button><button data-key="Enter" class="acc" aria-label="natural">♮</button><button data-key="Backspace" class="acc" aria-label="clear">⌫</button>
+          </div>
+          <p id="sheet-status" class="status" aria-live="polite"></p>
+          <div id="sheet-box" class="sheet-paper sheet-box">
+            <div id="sheet" class="sheet"></div>
+          </div>
+          <div id="sheet-result" class="result" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Free play -->
+    <section id="view-play" class="view" hidden>
+      <div class="play-hero">
+        <div class="now-playing" aria-live="polite">
+          <span id="play-note" class="big-note">—</span>
+          <span id="play-detail" class="muted">Press a key to begin</span>
+        </div>
+        <div id="play-history" class="chips" aria-label="Recently played notes"></div>
+      </div>
+      <div class="card tips">
+        <h2>How to play</h2>
+        <ul>
+          <li><strong>Mouse or touch:</strong> click the keys below. Drag across them to glide.</li>
+          <li><strong>Computer keyboard:</strong> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd> <kbd>G</kbd> <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> are the white keys, and <kbd>W</kbd> <kbd>E</kbd> <kbd>T</kbd> <kbd>Y</kbd> <kbd>U</kbd> are the black keys. <kbd>Z</kbd> and <kbd>X</kbd> move down or up an octave. Hold <kbd>Space</kbd> for the sustain pedal.</li>
+          <li><strong>MIDI keyboard:</strong> plug it in and press <em>Connect MIDI</em> below. Works in Chrome and Edge.</li>
+          <li>Middle C (C4) has a small dot under it, so you can always find your place.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Quiz -->
+    <section id="view-quiz" class="view" hidden>
+      <div class="card quiz-card">
+        <div class="quiz-settings">
+          <label>Clef
+            <select id="quiz-clef">
+              <option value="treble">Treble</option>
+              <option value="bass">Bass</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="quiz-accidentals"> Include sharps &amp; flats</label>
+        </div>
+        <div id="quiz-staff" class="staff" role="img" aria-label="Note on a staff"></div>
+        <p id="quiz-prompt" class="status" aria-live="polite">Play this note on the piano. Any octave counts.</p>
+        <dl class="stats">
+          <div><dt>Score</dt><dd id="quiz-score">0 / 0</dd></div>
+          <div><dt>Streak</dt><dd id="quiz-streak">0</dd></div>
+          <div><dt>Best streak</dt><dd id="quiz-best">0</dd></div>
+        </dl>
+        <div class="btn-row center">
+          <button id="quiz-skip" class="btn btn-ghost">Skip</button>
+          <button id="quiz-reset" class="btn btn-ghost">Reset score</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Scales & chords -->
+    <section id="view-scales" class="view" hidden>
+      <div class="card scales-card">
+        <div class="quiz-settings">
+          <label>Root
+            <select id="scale-root"></select>
+          </label>
+          <label>Type
+            <select id="scale-type"></select>
+          </label>
+          <button id="scale-play" class="btn">Play</button>
+        </div>
+        <h2 id="scale-title"></h2>
+        <div id="scale-notes" class="chips large"></div>
+        <p id="scale-formula" class="muted"></p>
+        <p id="scale-desc"></p>
+      </div>
+    </section>
+  </main>
+
+  <section class="piano-dock" aria-label="Piano">
+    <div class="piano-toolbar">
+      <label>Labels
+        <select id="label-mode">
+          <option value="notes">Note names</option>
+          <option value="keys">Computer keys</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+      <label>Sound
+        <select id="instrument">
+          <option value="piano">Grand piano</option>
+          <option value="synth">Synth</option>
+        </select>
+        <span id="sound-status" class="small muted"></span>
+      </label>
+      <label class="vol">Volume
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="0.7">
+      </label>
+      <div class="octave" aria-label="Computer keyboard octave">
+        <button id="oct-down" class="btn btn-small btn-ghost" aria-label="Octave down">−</button>
+        <span>Keys start at <strong id="oct-label">C4</strong></span>
+        <button id="oct-up" class="btn btn-small btn-ghost" aria-label="Octave up">+</button>
+      </div>
+      <button id="pedal-btn" class="btn btn-small btn-ghost" aria-pressed="false" title="Sustain pedal: hold Space, or click to latch">Pedal <kbd>Space</kbd></button>
+      <button id="midi-btn" class="btn btn-small btn-ghost">Connect MIDI</button>
+    </div>
+    <div class="keyboard-scroll">
+      <div id="keyboard" class="keyboard" data-labels="notes"></div>
+    </div>
+  </section>
+</body>
+</html>

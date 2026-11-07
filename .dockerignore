@@ -1,0 +1,7 @@
+.git
+.github
+*.md
+node_modules
+tests
+package.json
+package-lock.json

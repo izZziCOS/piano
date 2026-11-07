@@ -1,0 +1,12 @@
+{
+  "name": "piano-practice",
+  "private": true,
+  "description": "Piano learning website (static, served from site/).",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/site.test.mjs",
+    "serve": "node -e \"require('http').createServer((q,r)=>require('fs').readFile('site'+(q.url.split('?')[0].replace(/\/$/,'/index.html')),(e,d)=>e?r.writeHead(404).end():r.end(d))).listen(8000,()=>console.log('http://localhost:8000'))\""
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}

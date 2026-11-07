@@ -1,0 +1,171 @@
+// Turns a piece from pieces.js into a score (timed events + playable steps) and
+// draws it as sheet music with VexFlow (loaded globally from vendor/).
+import { parseMelody, noteName } from './notes.js';
+import { KEYS } from './generator.js';
+
+const DURATIONS = { 4: 'w', 3: 'hd', 2: 'h', 1.5: 'qd', 1: 'q', 0.75: '8d', 0.5: '8', 0.25: '16' };
+const HANDS = { rh: { clef: 'treble', restKey: 'b/4' }, lh: { clef: 'bass', restKey: 'd/3' } };
+
+/** Parse a piece into per-hand bars of events and a list of steps (shared onsets). */
+export function buildScore(piece) {
+  const [num, den] = piece.time.split('/').map(Number);
+  const barLen = (num * 4) / den;
+  const pickup = piece.pickup ?? 0;
+  const barOf = (t) => (pickup ? (t < pickup ? 0 : 1 + Math.floor((t - pickup + 1e-6) / barLen)) : Math.floor((t + 1e-6) / barLen));
+
+  const hands = {};
+  let barCount = 0;
+  for (const hand of ['rh', 'lh']) {
+    if (!piece[hand]) continue;
+    let t = 0;
+    const events = parseMelody(piece[hand]).map((ev) => {
+      const e = { ...ev, hand, time: t, bar: barOf(t) };
+      if (barOf(t + ev.beats - 0.01) !== e.bar) console.warn(`${piece.id}: note at beat ${t} crosses a bar line`);
+      t += ev.beats;
+      return e;
+    });
+    hands[hand] = events;
+    barCount = Math.max(barCount, events.length ? events[events.length - 1].bar + 1 : 0);
+  }
+
+  // Steps: every moment at which at least one note starts.
+  const byTime = new Map();
+  for (const events of Object.values(hands)) {
+    for (const e of events) {
+      if (e.rest) continue;
+      const key = Math.round(e.time * 1000);
+      if (!byTime.has(key)) byTime.set(key, { time: e.time, events: [] });
+      byTime.get(key).events.push(e);
+    }
+  }
+  const steps = [...byTime.values()].sort((a, b) => a.time - b.time);
+  const end = Math.max(...Object.values(hands).map((evs) => evs.reduce((s, e) => s + e.beats, 0)));
+  steps.forEach((s, i) => { s.beats = (steps[i + 1]?.time ?? end) - s.time; });
+
+  return { piece, num, den, barLen, pickup, hands, barCount, steps };
+}
+
+/**
+ * Draw the score into `container`. Each non-rest event gets an `el` property
+ * pointing at its SVG group so the caller can highlight it.
+ */
+export function renderScore(container, score, { noteNames = false } = {}) {
+  const VF = window.Vex?.Flow;
+  container.innerHTML = '';
+  if (!VF) {
+    container.textContent = 'Sheet music could not be loaded.';
+    return;
+  }
+  const { piece, hands, barCount } = score;
+  const handIds = Object.keys(hands);
+  const grand = handIds.length === 2;
+
+  const width = Math.max(300, container.clientWidth);
+  const ideal = piece.measureWidth ?? 220;
+  const perLine = Math.max(1, Math.min(4, Math.floor((width - 20) / ideal)));
+  const lines = Math.ceil(barCount / perLine);
+  const staffGap = noteNames ? 130 : 110;
+  const lineHeight = grand ? staffGap + 130 : 140;
+
+  const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
+  renderer.resize(width, lines * lineHeight + 20);
+  const ctx = renderer.getContext();
+
+  // Group events by bar for each hand.
+  const bars = {};
+  for (const h of handIds) {
+    bars[h] = Array.from({ length: barCount }, () => []);
+    for (const e of hands[h]) bars[h][e.bar].push(e);
+  }
+
+  for (let bar = 0; bar < barCount; bar++) {
+    const line = Math.floor(bar / perLine);
+    const col = bar % perLine;
+    const firstInLine = col === 0;
+    // The first bar of each line also holds the clef/key (and time) signature.
+    const lead = 60 + Math.abs(KEYS[piece.key] ?? 0) * 10 + (line === 0 ? 25 : 0);
+    const unit = (width - 20 - lead) / perLine;
+    const x = 10 + col * unit + (firstInLine ? 0 : lead);
+    const w = unit + (firstInLine ? lead : 0);
+    const y = line * lineHeight + 10;
+
+    const staves = handIds.map((h, i) => {
+      const stave = new VF.Stave(x, y + i * staffGap, w);
+      if (firstInLine) {
+        stave.addClef(HANDS[h].clef).addKeySignature(piece.key);
+        if (bar === 0) stave.addTimeSignature(piece.time);
+      }
+      if (bar === barCount - 1) stave.setEndBarType(VF.Barline.type.END);
+      return stave;
+    });
+    const startX = Math.max(...staves.map((s) => s.getNoteStartX()));
+    staves.forEach((s) => s.setNoteStartX(startX).setContext(ctx).draw());
+
+    if (grand) {
+      const [top, bottom] = staves;
+      if (firstInLine) {
+        new VF.StaveConnector(top, bottom).setType('brace').setContext(ctx).draw();
+        new VF.StaveConnector(top, bottom).setType('singleLeft').setContext(ctx).draw();
+      }
+      new VF.StaveConnector(top, bottom)
+        .setType(bar === barCount - 1 ? 'boldDoubleRight' : 'singleRight')
+        .setContext(ctx).draw();
+    }
+
+    const voices = [];
+    const beams = [];
+    handIds.forEach((h, i) => {
+      const { clef, restKey } = HANDS[h];
+      let events = bars[h][bar];
+      let notes;
+      if (!events.length) {
+        notes = [new VF.StaveNote({ clef, keys: [restKey], duration: 'wr', align_center: true })];
+      } else {
+        notes = events.map((e) => {
+          const duration = DURATIONS[e.beats] ?? 'q';
+          const note = new VF.StaveNote({
+            clef,
+            keys: e.rest ? [restKey] : e.names.map(toVexKey),
+            duration: duration.replace('d', '') + (e.rest ? 'r' : ''),
+            auto_stem: true,
+          });
+          if (duration.includes('d')) VF.Dot.buildAndAttach([note], { all: true });
+          if (noteNames && !e.rest) {
+            note.addModifier(
+              new VF.Annotation(e.midis.map((m) => noteName(m, { octave: false, flats: /b/.test(e.names[0].slice(1)) })).join(' '))
+                .setFont('Arial', 10)
+                .setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM),
+              0,
+            );
+          }
+          e.vfNote = note;
+          return note;
+        });
+      }
+      const voice = new VF.Voice({ num_beats: score.num, beat_value: score.den }).setStrict(false);
+      voice.addTickables(notes);
+      VF.Accidental.applyAccidentals([voice], piece.key);
+      const groups = score.den === 8 ? [new VF.Fraction(3, 8)] : undefined;
+      beams.push(...VF.Beam.generateBeams(notes, { beam_rests: false, ...(groups ? { groups } : {}) }));
+      voices.push({ voice, stave: staves[i] });
+    });
+
+    const formatter = new VF.Formatter();
+    voices.forEach(({ voice }) => formatter.joinVoices([voice]));
+    formatter.format(voices.map((v) => v.voice), staves[0].getNoteEndX() - startX - 10);
+    voices.forEach(({ voice, stave }) => voice.draw(ctx, stave));
+    beams.forEach((b) => b.setContext(ctx).draw());
+  }
+
+  for (const events of Object.values(hands)) {
+    for (const e of events) {
+      e.el = e.vfNote?.getSVGElement() ?? null;
+      delete e.vfNote;
+    }
+  }
+}
+
+function toVexKey(name) {
+  const m = /^([A-G])([#b]?)(-?\d)$/.exec(name);
+  return `${m[1].toLowerCase()}${m[2]}/${m[3]}`;
+}

@@ -1,0 +1,8 @@
+services:
+  piano:
+    build: .
+    image: piano-practice
+    container_name: piano-practice
+    ports:
+      - "8080:80"
+    restart: unless-stopped
