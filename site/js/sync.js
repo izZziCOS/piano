@@ -21,9 +21,9 @@ const STALE = 30000; // pull again when coming back to the tab after this long
 // last piece, menu choices) is a per-device setting and stays local.
 const MAX_KEYS = ['quizBestStreak'];
 const isMaxKey = (k) => MAX_KEYS.includes(k) || k.startsWith('earBest:');
-const MAP_MAX_KEYS = ['practiceLog', 'pieces', 'piecesNamed', 'piecesTempo', 'bestSpeed'];
+const MAP_MAX_KEYS = ['practiceLog', 'pieces', 'piecesNamed', 'piecesTempo', 'piecesRhythm', 'bestSpeed'];
 const SYNCED = (k) => isMaxKey(k) || MAP_MAX_KEYS.includes(k)
-  || ['noteStats', 'noteStatsResetAt', 'speedHistory', 'learnDone', 'dailyGoal', 'dailyGoalAt', 'ownPieces'].includes(k);
+  || ['noteStats', 'noteStatsResetAt', 'speedHistory', 'learnDone', 'dailyGoal', 'dailyGoalAt', 'ownPieces', 'barStats'].includes(k);
 
 // ------------------------------------------------------------ state
 
@@ -77,6 +77,10 @@ export function merge(a = {}, b = {}) {
     else if (k === 'speedHistory') {
       const byTime = new Map([...x, ...y].map((h) => [h.at, h]));
       out[k] = [...byTime.values()].sort((p, q) => p.at - q.at).slice(-200);
+    } else if (k === 'barStats') {
+      // Per piece, the most recently practised record wins (it already builds on the earlier passes).
+      out[k] = { ...x };
+      for (const [id, entry] of Object.entries(y)) if (!out[k][id] || entry.at > out[k][id].at) out[k][id] = entry;
     } else if (k === 'ownPieces') {
       out[k] = mergeLists(x, y); // per piece, the newest edit or deletion wins
     } else if (k === 'noteStats') {

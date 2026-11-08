@@ -34,6 +34,7 @@ function findChrome() {
 
 let server;
 let offline = false; // when true, the server drops every connection, as if the network were gone
+let swBuild = null; // when set, sw.js is served as if deployed with this commit id
 let browser;
 let base;
 const problems = []; // console errors/warnings, page errors, failed requests — across all tests
@@ -47,6 +48,7 @@ before(async () => {
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404).end('not found'); return; }
+      if (swBuild && url === '/sw.js') data = data.toString().replace("const BUILD = 'dev';", `const BUILD = '${swBuild}';`);
       res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream' }).end(data);
     });
   });
@@ -894,7 +896,7 @@ test('works offline and can be installed', async () => {
   const page = await open('#sheet');
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null, { timeout: 10000 });
   const stored = (name) => page.evaluate(async (n) => (await (await caches.open(n)).keys()).length, name);
-  await until(async () => (await stored('piano-shell-v1')) === shell.length, 10000, 'files stored');
+  await until(async () => (await stored('piano-shell-dev')) === shell.length, 10000, 'files stored');
   // The samples are stored once the piano has loaded.
   await until(async () => (await stored('piano-media-v1')) >= 90, 30000, 'samples stored');
 
@@ -910,6 +912,194 @@ test('works offline and can be installed', async () => {
     await until(() => page.evaluate(() => document.getElementById('sound-status').textContent === ''), 10000, 'piano loaded from storage');
   } finally {
     offline = false;
+  }
+  await page.close();
+});
+
+/** A robot drummer for rhythm mode: taps one key (any key) as each note is highlighted on the sheet. */
+function startTapper(page, { skip = 0, midi = 50 } = {}) {
+  return page.evaluate((skipEvery, key) => {
+    let n = 0;
+    new MutationObserver((muts) => {
+      const fresh = muts.some((m) => m.target.classList.contains('current') && !(m.oldValue ?? '').includes('current'));
+      if (!fresh) return;
+      if (skipEvery && ++n % skipEvery === 0) return;
+      const k = document.querySelector(`.key[data-midi="${key}"]`);
+      k.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 8, button: 0 }));
+      setTimeout(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 8 })), 40);
+    }).observe(document.getElementById('sheet'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  }, skip, midi);
+}
+
+test('rhythm mode: tap the rhythm on any key, scored on timing only', async () => {
+  const page = await open('#sheet/rh-c-position?mode=rhythm');
+  assert.equal(await page.$eval('input[name="sheet-mode"][value="rhythm"]', (e) => e.checked), true);
+  assert.match(await text(page, '#sheet-status'), /tap the rhythm/);
+  assert.equal(await page.$eval('#sheet-hints', (e) => e.offsetParent), null, 'no key hints: pitch doesn’t matter');
+  assert.notEqual(await page.$eval('#sheet-start', (e) => e.offsetParent), null, 'start button shown');
+  await page.$eval('#sheet-tempo', (e) => { e.value = 140; e.dispatchEvent(new Event('input')); });
+  await startTapper(page, { skip: 5, midi: 50 }); // D3: nowhere in the piece
+  await page.click('#sheet-start');
+  await page.waitForFunction(() => !document.getElementById('sheet-result').hidden, { timeout: 20000 });
+  const result = await text(page, '#sheet-result');
+  const num = (re) => +(result.match(re)?.[1] ?? -1);
+  assert.ok(num(/(\d+) on time/) >= 10, `taps on the beat count, whatever the key (${result})`);
+  assert.ok(num(/(\d+) missed/) >= 2, `skipped taps are missed (${result})`);
+  assert.doesNotMatch(result, /extra tap|wrong/);
+  assert.equal(await page.$eval('.key.target', () => 1).catch(() => 0), 0, 'no keys lit up');
+  const stars = await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).piecesRhythm);
+  assert.ok(stars['rh-c-position'] >= 1, 'rhythm stars are kept separately');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).barStats), undefined,
+    'rhythm passes don’t count towards trouble bars');
+  await page.close();
+});
+
+test('at tempo: bars that keep going wrong are suggested as a loop, and clean passes clear them', async () => {
+  const page = await open('#sheet/rh-c-position?mode=tempo');
+  assert.equal(await page.$eval('#sheet-suggest', (e) => e.hidden), true, 'nothing to suggest yet');
+  await page.select('#sheet-hints', 'always');
+  await page.$eval('#sheet-tempo', (e) => { e.value = 120; e.dispatchEvent(new Event('input')); });
+  // Miss notes only in bar 3 (the 9th–12th notes).
+  await page.evaluate(() => {
+    let n = 0;
+    new MutationObserver((muts) => {
+      const fresh = new Set(muts.filter((m) => !(m.oldValue ?? '').includes('target')).map((m) => m.target));
+      for (const k of fresh) {
+        if (!k.classList.contains('target')) continue;
+        n++;
+        if (n >= 9 && n <= 11) continue;
+        k.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, button: 0 }));
+        setTimeout(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9 })), 50);
+      }
+    }).observe(document.getElementById('keyboard'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  });
+  await page.click('#sheet-start');
+  await page.waitForFunction(() => !document.getElementById('sheet-result').hidden, { timeout: 20000 });
+  const trouble = await page.$eval('#sheet-result .trouble', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  assert.match(trouble, /Trouble spot: bar 3 \(75% of the notes missed or off the beat lately\)\. Loop bar 3 at 102 bpm/);
+  const before = await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).barStats['rh-c-position'].bars);
+  assert.equal(before[2].trouble, 0.75);
+  assert.equal(before[0].trouble, 0, 'clean bars are recorded as fine');
+
+  // The suggestion is there next time too, before starting.
+  await page.reload({ waitUntil: 'networkidle0' });
+  assert.match(await text(page, '#sheet-suggest'), /Trouble spot: bar 3/);
+  await page.click('#sheet-suggest button');
+  assert.equal(await page.$eval('#sheet-from', (e) => e.value), '2');
+  assert.equal(await page.$eval('#sheet-to', (e) => e.value), '2');
+  assert.equal(await page.$eval('#sheet-loop', (e) => e.checked), true, 'looping');
+  assert.equal(await text(page, '#sheet-bpm'), '76', '85% of the piece’s 90 bpm');
+  assert.equal(await page.$eval('#sheet-suggest', (e) => e.hidden), true, 'no need to suggest what you’re doing');
+
+  // A clean pass of the loop halves the bar's trouble.
+  await page.select('#sheet-hints', 'always');
+  await startRobot(page);
+  await page.click('#sheet-start');
+  await page.waitForFunction(() => /^Pass 1:/.test(document.getElementById('sheet-loop-log').textContent), { timeout: 15000 });
+  await page.click('#sheet-start'); // stop
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).barStats['rh-c-position'].bars);
+  assert.equal(after[2].trouble, 0.375);
+  assert.equal(after[2].plays, 2);
+
+  // Syncing keeps each piece's most recently practised record.
+  const merged = await page.evaluate(async () => {
+    const { merge } = await import('./js/sync.js');
+    const older = { barStats: { a: { at: 1, bars: { 0: { trouble: 1 } } }, b: { at: 5, bars: {} } } };
+    const newer = { barStats: { a: { at: 2, bars: { 0: { trouble: 0.5 } } } } };
+    return merge(older, newer).barStats;
+  });
+  assert.deepEqual(merged, { a: { at: 2, bars: { 0: { trouble: 0.5 } } }, b: { at: 5, bars: {} } });
+  await page.close();
+});
+
+test('the piano can be hidden, and stays hidden on this device', async () => {
+  const page = await open('#play', { width: 390, height: 800, mobile: true });
+  const shown = () => page.$eval('#keyboard-scroll', (e) => e.offsetParent !== null);
+  assert.equal(await shown(), true);
+  await page.click('#piano-toggle');
+  assert.equal(await shown(), false, 'hidden');
+  assert.equal(await page.$eval('#piano-toggle', (e) => e.getAttribute('aria-expanded')), 'false');
+  assert.equal(await page.$eval('#midi-btn', (e) => e.offsetParent), null, 'only the toggle is left');
+  assert.ok(await page.$eval('.piano-dock', (e) => e.offsetHeight) < 60, 'a slim bar');
+  // The computer keyboard still plays.
+  await page.keyboard.press('KeyA');
+  await page.waitForFunction(() => document.getElementById('play-note').textContent !== '—');
+  await page.reload({ waitUntil: 'networkidle0' });
+  assert.equal(await shown(), false, 'remembered');
+  await page.click('#piano-toggle');
+  assert.equal(await shown(), true, 'shown again');
+  assert.equal(await page.$eval('#piano-toggle', (e) => e.getAttribute('aria-expanded')), 'true');
+  await page.close();
+});
+
+test('screen readers and keyboard users can play the piano', async () => {
+  const page = await open('#play');
+  const piano = await page.$eval('#keyboard', (e) => ({ role: e.getAttribute('role'), label: e.getAttribute('aria-label') }));
+  assert.equal(piano.role, 'toolbar');
+  assert.match(piano.label, /^Piano/);
+  assert.equal(await page.$$eval('.key[tabindex="0"]', (k) => k.map((x) => x.dataset.midi).join()), '60', 'one Tab stop: middle C');
+  assert.equal(await page.$$eval('.key:not([role="button"])', (k) => k.length), 0, 'every key is a button');
+  const label = (m) => page.$eval(`.key[data-midi="${m}"]`, (e) => e.getAttribute('aria-label'));
+  assert.equal(await label(60), 'C4');
+  assert.equal(await label(61), 'C sharp 4 / D flat 4');
+  const focused = () => page.evaluate(() => +document.activeElement.dataset.midi);
+
+  await page.focus('.key[data-midi="60"]');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await focused(), 61, 'right: a semitone up');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await focused(), 73, 'up: an octave up');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await focused(), 60);
+  assert.equal(await page.$$eval('.key[tabindex="0"]', (k) => k.map((x) => x.dataset.midi).join()), '60', 'the Tab stop follows');
+  await page.keyboard.press('End');
+  assert.equal(await focused(), 108);
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await focused(), 108, 'stops at the top');
+  await page.keyboard.press('Home');
+  assert.equal(await focused(), 21);
+
+  // Space plays the focused key for as long as it's held (not the sustain pedal).
+  await page.focus('.key[data-midi="64"]');
+  await page.keyboard.down('Space');
+  assert.equal(await page.$eval('.key[data-midi="64"]', (e) => e.classList.contains('pressed')), true);
+  assert.equal(await page.$eval('#pedal-btn', (e) => e.getAttribute('aria-pressed')), 'false', 'no pedal');
+  assert.equal(await text(page, '#play-note'), 'E');
+  await page.keyboard.up('Space');
+  assert.equal(await page.$eval('.key[data-midi="64"]', (e) => e.classList.contains('pressed')), false, 'released');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.$$eval('.key.pressed', (k) => k.length), 0, 'Enter plays and lets go');
+  // Elsewhere, Space is still the pedal.
+  await page.focus('#volume');
+  await page.keyboard.down('Space');
+  assert.equal(await page.$eval('#pedal-btn', (e) => e.getAttribute('aria-pressed')), 'true');
+  await page.keyboard.up('Space');
+  await page.close();
+});
+
+test('an open page offers a reload when a new version is deployed', async () => {
+  // deploy.yml stamps the commit into this line of sw.js.
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  assert.match(sw, /^const BUILD = 'dev';$/m);
+  const workflow = fs.readFileSync(path.join(ROOT, '..', '.github', 'workflows', 'deploy.yml'), 'utf8');
+  assert.ok(workflow.includes(`s/^const BUILD = 'dev';/const BUILD = '\${GITHUB_SHA::12}';/`), 'the deploy step matches that line');
+
+  const page = await open('#play');
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, { timeout: 10000 });
+  assert.equal(await page.$eval('#update-note', (e) => e.hidden), true, 'not on a first visit');
+  swBuild = 'abc123';
+  try {
+    await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+    await page.waitForFunction(() => !document.getElementById('update-note').hidden, { timeout: 10000 });
+    assert.match(await text(page, '#update-note'), /new version/);
+    // The page switches to the new worker as it activates; the old files are cleared just after.
+    const shells = () => page.evaluate(async () => (await caches.keys()).filter((k) => k.startsWith('piano-shell')).join());
+    await until(async () => (await shells()) === 'piano-shell-abc123', 5000, 'the old files replaced');
+    await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle0' }), page.click('#update-reload')]);
+    assert.equal(await page.$eval('#update-note', (e) => e.hidden), true, 'gone after reloading');
+  } finally {
+    swBuild = null;
   }
   await page.close();
 });

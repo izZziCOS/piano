@@ -52,6 +52,13 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      # A new commit id in sw.js makes browsers install the new version and
+      # lets open pages offer a reload (see site/sw.js).
+      - name: Stamp the version into the service worker
+        run: |
+          sed -i "s/^const BUILD = 'dev';/const BUILD = '${GITHUB_SHA::12}';/" site/sw.js
+          grep -q "^const BUILD = '${GITHUB_SHA::12}';" site/sw.js
+
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:

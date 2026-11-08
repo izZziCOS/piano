@@ -529,7 +529,13 @@ button.link:focus-visible { outline: 2px solid var(--accent); }
 
 /* ---------- Sheet modes ---------- */
 #view-sheet[data-mode="name"] .not-name { display: none; }
-#view-sheet:not([data-mode="tempo"]) .tempo-only { display: none; }
+/* Rhythm is At tempo without pitches: the same count-in, passage and loop controls. */
+#view-sheet:not([data-mode="tempo"]):not([data-mode="rhythm"]) .tempo-only { display: none; }
+#view-sheet[data-mode="rhythm"] .no-rhythm { display: none; }
+/* A trouble-spot suggestion: bars to loop. */
+.trouble { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 6px 0; font-size: 0.9rem; }
+.trouble[hidden] { display: none; }
+.result .trouble { justify-content: center; }
 .vf-stavenote.close path { fill: #b07d06; stroke: #b07d06; }
 
 /* ---------- Goal chip (top bar) ---------- */
@@ -751,3 +757,61 @@ button.link:focus-visible { outline: 2px solid var(--accent); }
   cursor: pointer;
 }
 .welcome-close:hover { background: var(--surface); color: var(--text); }
+
+/* ---------- Piano: keyboard focus and hiding ---------- */
+.keyboard:focus-within { outline: none; }
+.key:focus { outline: none; }
+.key:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.key.white:focus-visible { z-index: 1; }
+.key.black:focus-visible { z-index: 3; }
+.piano-toggle .chevron { display: inline-block; transition: transform 0.15s; }
+/* Hidden: only the toggle stays, as a slim bar. The computer keyboard and MIDI still play. */
+.piano-dock[data-collapsed="true"] { padding: 6px 0; }
+.piano-dock[data-collapsed="true"] .keyboard-scroll { display: none; }
+.piano-dock[data-collapsed="true"] .piano-toolbar { padding-bottom: 0; }
+.piano-dock[data-collapsed="true"] .piano-toolbar > :not(.piano-toggle) { display: none; }
+.piano-dock[data-collapsed="true"] .chevron { transform: rotate(180deg); }
+@media (max-width: 640px) {
+  .piano-toggle .toggle-label { display: none; }
+  .piano-dock[data-collapsed="true"] .piano-toggle .toggle-label { display: inline; }
+}
+
+/* ---------- "New version" note ---------- */
+.update-note {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  width: fit-content;
+  margin: 0 auto;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 0.15);
+  font-size: 0.9rem;
+}
+.update-note[hidden] { display: none; }
+.update-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: 1.2rem/1 var(--font);
+  cursor: pointer;
+}
+.update-close:hover { background: var(--surface-2); color: var(--text); }
+
+/* Four practice modes: on a phone, spread them over the full width, one line each. */
+@media (max-width: 640px) {
+  .lesson-head .segmented { display: flex; width: 100%; }
+  .lesson-head .segmented label { flex: 1 1 auto; }
+  .lesson-head .segmented span { display: block; text-align: center; white-space: nowrap; padding: 6px 6px; font-size: 0.82rem; }
+}

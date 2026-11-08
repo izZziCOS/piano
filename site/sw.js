@@ -9,10 +9,12 @@
 //   name), so they're served from storage first. The page asks for the
 //   samples to be stored once the piano has loaded (see main.js).
 //
-// Bump VERSION when SHELL changes (a file added, renamed or removed). Changing
-// a file's contents doesn't need it.
-const VERSION = 'v1';
-const SHELL_CACHE = `piano-shell-${VERSION}`;
+// BUILD is replaced with the commit id when the site is deployed
+// (.github/workflows/deploy.yml), so every deploy is a new service worker: open
+// pages are told a new version is ready, and the stored files are refreshed.
+// When running locally it stays 'dev'.
+const BUILD = 'dev';
+const SHELL_CACHE = `piano-shell-${BUILD}`;
 const MEDIA_CACHE = 'piano-media-v1';
 const NETWORK_TIMEOUT = 4000;
 

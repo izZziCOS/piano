@@ -225,13 +225,49 @@ if (!store.get('welcomed', false) && !hasProgress()) {
   welcome.addEventListener('click', (e) => { if (e.target.closest('a, button')) dismiss(); });
 }
 
+// --- Hide the piano (it takes a lot of a phone screen); remembered on this device ---
+const dock = document.querySelector('.piano-dock');
+function showPiano(shown) {
+  dock.dataset.collapsed = String(!shown);
+  const toggle = $('piano-toggle');
+  toggle.setAttribute('aria-expanded', String(shown));
+  toggle.querySelector('.toggle-label').textContent = shown ? 'Hide piano' : 'Show piano';
+  toggle.title = shown ? 'Hide the piano. Your computer keyboard and MIDI keyboard still play.' : 'Show the piano';
+  if (shown) requestAnimationFrame(() => keyboard.reveal(keyboard.focusMidi, { center: true, smooth: false }));
+}
+showPiano(!store.get('pianoHidden', false));
+$('piano-toggle').addEventListener('click', () => {
+  const shown = dock.dataset.collapsed === 'true';
+  store.set('pianoHidden', !shown);
+  showPiano(shown);
+});
+
 // --- Offline use and installing as an app (sw.js) ---
 if ('serviceWorker' in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register('sw.js').then(async () => {
+  // Every deploy changes sw.js (deploy.yml stamps the commit into it). The new
+  // service worker takes over at once; this page is still running the old
+  // code, so offer a reload. (Not on the first visit: then there was no old one.)
+  let hadWorker = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadWorker) $('update-note').hidden = false;
+    hadWorker = true;
+  });
+  $('update-reload').addEventListener('click', () => location.reload());
+  $('update-close').addEventListener('click', () => { $('update-note').hidden = true; });
+
+  navigator.serviceWorker.register('sw.js').then(async (registration) => {
+    // Browsers only look for a new version when a page loads. The site is often
+    // left open for a long practice session, so also look when you come back to it.
+    let checked = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - checked < 10 * 60 * 1000) return;
+      checked = Date.now();
+      registration.update().catch(() => { /* offline */ });
+    });
     // Keep the piano samples for offline use once they've all loaded (they're
     // usually in the HTTP cache by then, so nothing is downloaded twice).
     await audio.pianoLoaded;
-    const registration = await navigator.serviceWorker.ready;
-    registration.active?.postMessage({ type: 'store-media', urls: audio.sampleUrls() });
+    const ready = await navigator.serviceWorker.ready;
+    ready.active?.postMessage({ type: 'store-media', urls: audio.sampleUrls() });
   }).catch(() => { /* not available (e.g. blocked storage): the site works online as before */ });
 }

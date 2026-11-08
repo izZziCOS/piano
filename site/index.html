@@ -89,6 +89,7 @@
             <div class="segmented" role="radiogroup" aria-label="Practice mode">
               <label><input type="radio" name="sheet-mode" value="play" checked><span>Play it</span></label>
               <label><input type="radio" name="sheet-mode" value="tempo"><span>At tempo</span></label>
+              <label><input type="radio" name="sheet-mode" value="rhythm"><span>Rhythm</span></label>
               <label><input type="radio" name="sheet-mode" value="name"><span>Name the notes</span></label>
             </div>
           </div>
@@ -148,7 +149,7 @@
                 <option value="120">2 minutes</option>
               </select>
             </label>
-            <label class="not-name">Hints
+            <label class="not-name no-rhythm">Hints
               <select id="sheet-hints">
                 <option value="always">Always show keys</option>
                 <option value="fade">Fade out as I improve</option>
@@ -171,7 +172,7 @@
               </select>
               after a clean pass
             </label>
-            <label class="check not-name"><input type="checkbox" id="sheet-names"> Show note names</label>
+            <label class="check not-name no-rhythm"><input type="checkbox" id="sheet-names"> Show note names</label>
             <div class="btn-row">
               <button id="sheet-start" class="btn tempo-only">▶ Start</button>
               <button id="sheet-listen" class="btn btn-ghost">Listen</button>
@@ -191,6 +192,7 @@
           </div>
           <p id="sheet-status" class="status" aria-live="polite"></p>
           <p id="sheet-loop-log" class="status small tempo-only" aria-live="polite"></p>
+          <p id="sheet-suggest" class="tempo-only trouble" hidden></p>
           <div id="sheet-box" class="sheet-paper sheet-box">
             <div id="sheet" class="sheet"></div>
           </div>
@@ -405,6 +407,12 @@
 
   <div id="chart-tip" class="chart-tip" role="tooltip" hidden></div>
 
+  <div id="update-note" class="update-note" role="status" hidden>
+    <span>A new version of the site is ready.</span>
+    <button id="update-reload" class="btn btn-small" type="button">Reload</button>
+    <button id="update-close" class="update-close" type="button" aria-label="Later">×</button>
+  </div>
+
   <dialog id="own-dialog" class="own-dialog" aria-labelledby="own-heading">
     <form id="own-form" novalidate>
       <h2 id="own-heading">Add your own piece</h2>
@@ -456,6 +464,9 @@
 
   <section class="piano-dock" aria-label="Piano">
     <div class="piano-toolbar">
+      <button id="piano-toggle" class="btn btn-small btn-ghost piano-toggle" type="button" aria-expanded="true" aria-controls="keyboard-scroll">
+        <span aria-hidden="true" class="chevron">▾</span> <span class="toggle-label">Hide piano</span>
+      </button>
       <label>Labels
         <select id="label-mode">
           <option value="notes">Note names</option>
@@ -481,7 +492,7 @@
       <button id="pedal-btn" class="btn btn-small btn-ghost" aria-pressed="false" title="Sustain pedal: hold Space, or click to latch">Pedal <kbd>Space</kbd></button>
       <button id="midi-btn" class="btn btn-small btn-ghost">Connect MIDI</button>
     </div>
-    <div class="keyboard-scroll">
+    <div class="keyboard-scroll" id="keyboard-scroll">
       <div id="keyboard" class="keyboard" data-labels="notes"></div>
     </div>
   </section>

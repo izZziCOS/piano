@@ -1,9 +1,11 @@
-// Sheet music practice. Three modes:
+// Sheet music practice. Four modes:
 //  - play:  play the notes on the piano; the music waits for you. Keyboard
 //           hints can be always on, fade out as you get notes right, or off.
 //  - tempo: play along in time after a count-in; every note is scored as on
 //           time, early, late or missed. You can pick a range of bars, loop it,
-//           and have the tempo go up after every clean pass.
+//           and have the tempo go up after every clean pass. Bars that keep
+//           going wrong are remembered and suggested as the next loop.
+//  - rhythm: like tempo, but tap the rhythm on any key: only the timing counts.
 //  - name:  a reading test; type the name of each highlighted note (e.g. F, F#, Bb).
 //           Optionally timed. Every answer feeds the spaced-repetition stats.
 import { PIECES } from './pieces.js';
@@ -43,7 +45,7 @@ let cleanStreak = 0; // correct steps in a row without a wrong note (for fading 
 let stepMistakes = 0;
 
 // tempo mode
-let tempo = null; // { expected[], wrong, stopAudio, timers[], spb }
+let tempo = null; // { expected[], wrong, wrongBars[], stopAudio, timers[], spb }
 let loop = null; // while looping a passage: { passes, clean, startBpm, timer }
 
 // name mode
@@ -125,10 +127,15 @@ export function init(keyboard) {
     if (a === 'again') restart();
     else if (a === 'new') load(piece.id);
     else if (a === 'weak') load('weak');
+    else if (a === 'drill') drill(btn.dataset);
     else {
       const list = allPieces();
       load(list[list.findIndex((p) => p.id === piece.id) + 1].id);
     }
+  });
+  $('sheet-suggest').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="drill"]');
+    if (btn) drill(btn.dataset);
   });
   $('sheet-answer').addEventListener('keydown', onAnswerKey);
   // On touch screens use the on-screen buttons instead of popping up the phone keyboard.
@@ -179,7 +186,7 @@ export function enter(param) {
     }
     if (changed) store.set('builder', builderSettings());
     const m = query.get('mode');
-    if (m === 'name' || m === 'play' || m === 'tempo') {
+    if (m === 'name' || m === 'play' || m === 'tempo' || m === 'rhythm') {
       mode = m;
       document.querySelector(`input[name="sheet-mode"][value="${mode}"]`).checked = true;
     }
@@ -198,19 +205,20 @@ export function exit() {
 }
 
 const bpm = () => +$('sheet-tempo').value;
+/** Modes that play along in time (count-in, metronome, passage, loop). */
+const timedMode = () => mode === 'tempo' || mode === 'rhythm';
+const STARS_KEY = { name: 'piecesNamed', tempo: 'piecesTempo', rhythm: 'piecesRhythm' };
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 const timerSeconds = () => (mode === 'name' ? +$('sheet-timer').value : 0);
 
 function renderList() {
-  const played = store.get('pieces', {});
-  const named = store.get('piecesNamed', {});
-  const timed = store.get('piecesTempo', {});
+  const played = store.get(STARS_KEY[mode] ?? 'pieces', {});
   const pieces = allPieces();
   const levels = [...new Set(pieces.map((p) => p.level))];
   $('sheet-list').innerHTML = levels.map((level) => `
     <li class="group-label">${level}</li>
     ${pieces.filter((p) => p.level === level).map((p) => {
-      const best = ({ name: named, tempo: timed }[mode] ?? played)[p.id] ?? 0;
+      const best = played[p.id] ?? 0;
       const tag = p.generated ? 'New every time' : p.rh && p.lh ? 'Both hands' : p.rh ? 'Right hand' : 'Left hand';
       const current = piece?.id === p.id ? ' aria-current="true"' : '';
       const starsHtml = p.generated ? '' : `<span class="stars${best ? '' : ' empty'}" aria-label="${best} of 3 stars">${stars(best)}</span>`;
@@ -325,7 +333,7 @@ const wholePiece = () => {
 function markRange() {
   if (!score) return;
   const { from, to } = barRange();
-  const active = mode === 'tempo' && !wholePiece();
+  const active = timedMode() && !wholePiece();
   for (const evs of Object.values(score.hands)) {
     for (const e of evs) e.el?.classList.toggle('outside', active && (e.bar < from || e.bar > to));
   }
@@ -346,8 +354,8 @@ function paint(playing = -1) {
   }
   score.steps.forEach((s, i) => {
     for (const e of s.events) {
-      if (mode !== 'tempo') e.el?.classList.remove('right', 'missed', 'close');
-      e.el?.classList.toggle('done', playing < 0 && i < idx && mode !== 'tempo');
+      if (!timedMode()) e.el?.classList.remove('right', 'missed', 'close');
+      e.el?.classList.toggle('done', playing < 0 && i < idx && !timedMode());
       e.el?.classList.toggle('current', playing < 0 ? i === idx && !done : i === playing);
     }
   });
@@ -383,7 +391,7 @@ function restart({ keepSession = false } = {}) {
   $('sheet-box').scrollTop = 0;
   kb.clear('target');
   if (mode === 'name') startNaming(keepSession);
-  else if (mode === 'tempo') { clearInterval(clock); readyTempo(); }
+  else if (timedMode()) { clearInterval(clock); readyTempo(); }
   else { clearInterval(clock); startPlaying(); }
 }
 
@@ -437,7 +445,7 @@ function showCurrent() {
     scrollSheetTo(items[qi]?.event.el);
     return;
   }
-  if (mode === 'tempo') return;
+  if (timedMode()) return;
   if (idx >= score.steps.length) return;
   const req = required(score.steps[idx]);
   if (hintsVisible()) {
@@ -448,7 +456,7 @@ function showCurrent() {
 }
 
 export function onNote(midi) {
-  if (mode === 'tempo') return onTempoNote(midi);
+  if (timedMode()) return onTempoNote(midi);
   if (mode !== 'play' || !score || done || stopListen || idx >= score.steps.length) return;
   const req = required(score.steps[idx]);
   if (!req.length) return;
@@ -662,7 +670,7 @@ function showResult({ accuracy, detail, extra = '', rate = true, showAccuracy = 
   const earned = accuracy >= 95 ? 3 : accuracy >= 80 ? 2 : 1;
   let isBest = false;
   if (rate && !piece.generated) {
-    const key = { name: 'piecesNamed', tempo: 'piecesTempo' }[mode] ?? 'pieces';
+    const key = STARS_KEY[mode] ?? 'pieces';
     const progress = store.get(key, {});
     isBest = earned > (progress[piece.id] ?? 0);
     if (isBest) store.set(key, { ...progress, [piece.id]: earned });
@@ -723,10 +731,75 @@ function readyTempo() {
   idx = 0;
   paint();
   const { from, to } = barRange();
-  setStatus(wholePiece()
-    ? 'Press Start. You’ll hear one bar of clicks, then play along in time. The other hand plays itself.'
-    : `Press Start to play bars ${barLabel(from)}–${barLabel(to)} after one bar of clicks.${$('sheet-loop').checked ? ' They repeat until you press Stop.' : ''}`);
+  const repeats = $('sheet-loop').checked ? ' They repeat until you press Stop.' : '';
+  if (mode === 'rhythm') {
+    setStatus(`Press Start. After one bar of clicks, tap the rhythm of ${wholePiece() ? 'the music' : `bars ${barLabel(from)}–${barLabel(to)}`}`
+      + ` on any key (the piano, a MIDI keyboard or a letter key). Only the timing counts, not which key.${wholePiece() ? '' : repeats}`);
+  } else {
+    setStatus(wholePiece()
+      ? 'Press Start. You’ll hear one bar of clicks, then play along in time. The other hand plays itself.'
+      : `Press Start to play bars ${barLabel(from)}–${barLabel(to)} after one bar of clicks.${repeats}`);
+  }
+  showSuggestion();
   $('sheet-start').textContent = '▶ Start';
+}
+
+// ---------------------------------------------------------------- trouble bars
+
+const barsText = (from, to) => (from === to
+  ? (score.pickup && from === 0 ? 'the pickup bar' : `bar ${barLabel(from)}`)
+  : `bars ${barLabel(from)}–${barLabel(to)}`);
+
+/**
+ * The bars that have gone wrong most often lately, with a button to loop them
+ * a little slower. Only for At tempo on a fixed piece, and not while you're
+ * already practising exactly that passage.
+ */
+function troubleHtml() {
+  if (mode !== 'tempo' || !score || piece.generated) return '';
+  const spot = stats.troubleSpot(piece, score.barCount);
+  if (!spot) return '';
+  const { from, to } = barRange();
+  if (from === spot.from && to === spot.to && $('sheet-loop').checked) return '';
+  const bars = barsText(spot.from, spot.to);
+  const slower = Math.max(+$('sheet-tempo').min, Math.round((bpm() * 0.85) / 2) * 2);
+  return `<span>Trouble spot: <strong>${bars}</strong> (${Math.round(spot.trouble * 100)}% of the notes missed or off the beat lately).</span>
+    <button class="btn btn-small" type="button" data-action="drill" data-from="${spot.from}" data-to="${spot.to}" data-bpm="${slower}">Loop ${bars} at ${slower} bpm</button>`;
+}
+
+function showSuggestion() {
+  const html = troubleHtml();
+  $('sheet-suggest').innerHTML = html;
+  $('sheet-suggest').hidden = !html;
+}
+
+/** Practise a passage on a loop: chosen from a trouble-spot suggestion. */
+function drill({ from, to, bpm: speed }) {
+  $('sheet-from').value = from;
+  $('sheet-to').value = to;
+  $('sheet-loop').checked = true;
+  store.set('sheetLoop', true);
+  $('view-sheet').dataset.loop = 'true';
+  $('sheet-tempo').value = speed;
+  $('sheet-bpm').textContent = $('sheet-tempo').value;
+  markRange();
+  restart();
+  $('sheet-start').focus({ preventScroll: true });
+}
+
+/** Feed one pass into the per-bar trouble scores. */
+function recordBars(t) {
+  if (mode !== 'tempo' || piece.generated) return;
+  const perBar = new Map();
+  const add = (bar, notes, errors) => {
+    const r = perBar.get(bar) ?? { notes: 0, errors: 0 };
+    r.notes += notes;
+    r.errors += errors;
+    perBar.set(bar, r);
+  };
+  for (const x of t.expected) add(x.events[0].bar, 1, x.result === 'missed' ? 1 : x.result === 'ontime' ? 0 : 0.5);
+  for (const bar of t.wrongBars) add(bar, 0, 1);
+  stats.recordBars(piece, perBar);
 }
 
 function startTempo() {
@@ -734,6 +807,7 @@ function startTempo() {
   stop();
   stopTempo();
   $('sheet-result').hidden = true;
+  $('sheet-suggest').hidden = true;
   for (const evs of Object.values(score.hands)) for (const e of evs) e.el?.classList.remove('right', 'close', 'missed', 'done');
   done = false;
   idx = -1;
@@ -768,13 +842,15 @@ function startTempo() {
   const notes = steps.flatMap(({ st }) => st.events.filter((e) => !isRequired(e)).flatMap((e) =>
     e.midis.map((midi) => ({ midi, at: when(st), dur: Math.min(e.play, endBeat - st.time) * spb, velocity: e.vel * 0.85 }))));
 
+  // What should be played: every note, or in rhythm mode one tap per step (any
+  // key; a chord is one tap). `midi: null` matches any key.
   const expected = [];
   for (const { st, i } of steps) {
-    for (const e of st.events.filter(isRequired)) {
-      for (const midi of e.midis) {
-        expected.push({ midi, step: i, event: e, perf: audio.heardAt(when(st)), result: null, dt: 0 });
-      }
-    }
+    const events = st.events.filter(isRequired);
+    if (!events.length) continue;
+    const base = { step: i, perf: audio.heardAt(when(st)), result: null, dt: 0 };
+    if (mode === 'rhythm') expected.push({ ...base, midi: null, events });
+    else for (const e of events) for (const midi of e.midis) expected.push({ ...base, midi, events: [e] });
   }
 
   const timers = [];
@@ -786,13 +862,13 @@ function startTempo() {
     kb.clear('target');
     paint();
     const req = required(st);
-    if (req.length && hintsVisible()) { kb.mark(req, 'target'); kb.reveal(req); }
+    if (req.length && mode === 'tempo' && hintsVisible()) { kb.mark(req, 'target'); kb.reveal(req); }
     scrollSheetTo(st.events.find((e) => e.el)?.el);
   }));
   const window = tempoWindow(spb);
   timers.push(setTimeout(finishTempo, audio.heardAt(musicStart + totalBeats * spb) - performance.now() + window));
 
-  tempo = { expected, wrong: 0, timers, spb, whole, running: true, stopAudio: audio.schedule({ notes, clicks }) };
+  tempo = { expected, wrong: 0, wrongBars: [], lastHit: -1e9, timers, spb, whole, running: true, stopAudio: audio.schedule({ notes, clicks }) };
   $('sheet-start').textContent = '■ Stop';
 }
 
@@ -803,25 +879,30 @@ const onTimeWindow = (spb) => Math.max(70, Math.min(120, spb * 1000 * 0.15));
 function onTempoNote(midi) {
   if (!tempo?.running) return;
   const t = performance.now();
+  // Rhythm: keys pressed together (a chord, or two fingers) are one tap.
+  if (mode === 'rhythm' && t - tempo.lastHit < 60) return;
   let best = null;
   for (const x of tempo.expected) {
-    if (x.result || x.midi !== midi) continue;
+    if (x.result || (x.midi !== null && x.midi !== midi)) continue;
     if (!best || Math.abs(t - x.perf) < Math.abs(t - best.perf)) best = x;
   }
   if (!best || Math.abs(t - best.perf) > tempoWindow(tempo.spb)) {
     tempo.wrong++;
+    const bar = score.steps[idx]?.events[0].bar;
+    if (bar !== undefined) tempo.wrongBars.push(bar);
     kb.flash(midi, 'wrong');
     return;
   }
+  tempo.lastHit = t;
   best.dt = t - best.perf;
   best.result = Math.abs(best.dt) <= onTimeWindow(tempo.spb) ? 'ontime' : best.dt < 0 ? 'early' : 'late';
   kb.flash(midi, best.result === 'ontime' ? 'correct' : 'demo');
   stats.logPractice(1);
-  judgeEvent(best.event);
+  best.events.forEach((e) => judgeEvent(e));
 }
 
-function judgeEvent(e) {
-  const xs = tempo.expected.filter((x) => x.event === e);
+function judgeEvent(e, t = tempo) {
+  const xs = t.expected.filter((x) => x.events.includes(e));
   if (xs.some((x) => !x.result)) return;
   e.el?.classList.remove('right', 'close', 'missed');
   e.el?.classList.add(xs.every((x) => x.result === 'ontime') ? 'right' : xs.some((x) => x.result === 'missed') ? 'missed' : 'close');
@@ -841,7 +922,8 @@ function finishTempo() {
   if (!tempo?.running) return;
   const t = tempo;
   for (const x of t.expected) if (!x.result) x.result = 'missed';
-  for (const e of new Set(t.expected.map((x) => x.event))) judgeEvent(e);
+  for (const e of new Set(t.expected.flatMap((x) => x.events))) judgeEvent(e, t);
+  recordBars(t);
   t.running = false;
   t.timers.forEach(clearTimeout);
   tempo = null;
@@ -859,7 +941,8 @@ function finishTempo() {
   const avg = hits.length ? hits.reduce((a, x) => a + x.dt, 0) / hits.length : 0;
   const tendency = Math.abs(avg) < 25 ? 'Your timing is centred on the beat.'
     : `On average you play ${Math.round(Math.abs(avg))} ms ${avg < 0 ? 'early (rushing)' : 'late (dragging)'}.`;
-  const detail = `${ontime} on time · ${early} early · ${late} late · ${missed} missed${t.wrong ? ` · ${t.wrong} wrong ${t.wrong === 1 ? 'note' : 'notes'}` : ''}`;
+  const extraNotes = mode === 'rhythm' ? ['extra tap', 'extra taps'] : ['wrong note', 'wrong notes'];
+  const detail = `${ontime} on time · ${early} early · ${late} late · ${missed} missed${t.wrong ? ` · ${t.wrong} ${extraNotes[t.wrong === 1 ? 0 : 1]}` : ''}`;
 
   if ($('sheet-loop').checked) return nextPass({ clean: missed === 0 && t.wrong === 0, detail });
   endLoop(); // Loop was switched off during this pass: it was the last one.
@@ -867,7 +950,8 @@ function finishTempo() {
   showResult({
     accuracy,
     detail: t.whole ? detail : `Bars ${barLabel(from)}–${barLabel(to)}: ${detail}`,
-    extra: `<p class="muted">${tendency} Green notes were on time, gold early or late, red missed.</p>`,
+    extra: `<p class="muted">${tendency} Green notes were on time, gold early or late, red missed.</p>`
+      + (troubleHtml() ? `<p class="trouble">${troubleHtml()}</p>` : ''),
     rate: t.whole, // stars are for playing the whole piece
     showAccuracy: true,
     icon: '♪',

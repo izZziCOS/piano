@@ -1,11 +1,20 @@
 // On-screen piano keyboard. Emits 'noteon' / 'noteoff' for every input source.
-import { isBlack, noteName, fullName } from './notes.js';
+//
+// For keyboard and screen-reader users the piano is one stop in the Tab order
+// (a "roving tabindex"): the arrow keys move between keys (left/right by a
+// semitone, up/down by an octave, Home/End to the ends) and Enter or Space
+// plays the focused key for as long as it's held. Each key is a button named
+// by its note, e.g. "C4" or "C sharp 4 / D flat 4".
+import { isBlack, noteName } from './notes.js';
 import * as audio from './audio.js';
 
 // Computer keys, layout-independent (KeyboardEvent.code), starting at the base note.
 export const KEY_CODES = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY',
   'KeyH', 'KeyU', 'KeyJ', 'KeyK', 'KeyO', 'KeyL', 'KeyP', 'Semicolon'];
 const KEY_LABELS = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K', 'O', 'L', 'P', ';'];
+/** A key's name as a screen reader should say it: "C sharp 4 / D flat 4". */
+const spoken = (name) => name.replace('♯', ' sharp ').replace('♭', ' flat ');
+const keyName = (m) => (isBlack(m) ? `${spoken(noteName(m))} / ${spoken(noteName(m, { flats: true }))}` : noteName(m));
 
 export class Keyboard {
   constructor(el) {
@@ -17,7 +26,12 @@ export class Keyboard {
     this.base = 60;
     this.low = 21; // A0
     this.high = 108; // C8 — a full 88-key piano
+    this.focusMidi = 60; // the key that Tab lands on
+    this.keyHeld = null; // the key held down with Enter or Space
+    this.el.setAttribute('role', 'toolbar');
+    this.el.setAttribute('aria-label', 'Piano. Arrow keys choose a key, Enter or Space plays it.');
     this.bindPointer();
+    this.bindKeys();
   }
 
   on(type, fn) { this.listeners[type].add(fn); }
@@ -42,7 +56,9 @@ export class Keyboard {
     for (let m = this.low; m <= this.high; m++) {
       const key = document.createElement('div');
       key.dataset.midi = m;
-      key.setAttribute('aria-label', fullName(m, { octave: true }));
+      key.setAttribute('role', 'button');
+      key.setAttribute('aria-label', keyName(m));
+      key.tabIndex = m === this.focusMidi ? 0 : -1;
       key.innerHTML = `<span class="label-key"></span><span class="label-note">${noteName(m, { octave: m % 12 === 0 })}</span>`;
       if (isBlack(m)) {
         key.className = 'key black';
@@ -114,6 +130,10 @@ export class Keyboard {
       // Release implicit touch capture so dragging across keys fires pointerover.
       if (key.hasPointerCapture?.(e.pointerId)) key.releasePointerCapture(e.pointerId);
       move(e.pointerId, +key.dataset.midi);
+      // Tab comes back to the last key played.
+      this.keys.get(this.focusMidi)?.setAttribute('tabindex', '-1');
+      this.focusMidi = +key.dataset.midi;
+      key.tabIndex = 0;
     });
     this.el.addEventListener('pointerover', (e) => {
       const key = keyFrom(e);
@@ -123,6 +143,46 @@ export class Keyboard {
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  bindKeys() {
+    const stop = (e) => { e.preventDefault(); e.stopPropagation(); }; // not the page's Space-for-pedal shortcut
+    this.el.addEventListener('keydown', (e) => {
+      const key = e.target.closest?.('.key');
+      if (!key || e.ctrlKey || e.metaKey || e.altKey) return;
+      const m = +key.dataset.midi;
+      const to = { ArrowRight: m + 1, ArrowLeft: m - 1, ArrowUp: m + 12, ArrowDown: m - 12, Home: this.low, End: this.high }[e.key];
+      if (to !== undefined) {
+        stop(e);
+        this.focusKey(Math.max(this.low, Math.min(this.high, to)));
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        stop(e);
+        if (!e.repeat && this.keyHeld === null) {
+          this.keyHeld = m;
+          this.press(m);
+        }
+      }
+    });
+    const letGo = () => {
+      if (this.keyHeld === null) return;
+      this.release(this.keyHeld);
+      this.keyHeld = null;
+    };
+    this.el.addEventListener('keyup', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && this.keyHeld !== null) { stop(e); letGo(); }
+    });
+    this.el.addEventListener('focusout', letGo);
+  }
+
+  /** Move keyboard focus (and the Tab stop) to a key. */
+  focusKey(midi) {
+    const el = this.keys.get(midi);
+    if (!el) return;
+    this.keys.get(this.focusMidi)?.setAttribute('tabindex', '-1');
+    this.focusMidi = midi;
+    el.tabIndex = 0;
+    el.focus({ preventScroll: true });
+    this.reveal(midi);
   }
 
   /** Persistent highlight (e.g. 'target', 'scale', 'root'). */

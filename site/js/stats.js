@@ -153,3 +153,75 @@ export function allNotes() {
     return { clef, name, ...s, accuracy: (s.seen - s.missed) / s.seen };
   });
 }
+
+// ------------------------------------------------------------ trouble bars (at tempo)
+//
+// Spaced repetition for pieces: after every pass in At tempo, each bar that was
+// played gets a "trouble" score, the share of its notes that were missed,
+// wrong or (counting half) early or late, averaged with its earlier score. Bars
+// you keep fumbling stay high and are suggested as the next loop; clean passes
+// bring the score down until the suggestion goes away. Stored per piece with a
+// fingerprint of its notes, so editing one of your own pieces starts afresh.
+
+const BARS_KEY = 'barStats';
+const TROUBLE = 0.2; // below this a bar is fine
+
+/** A short fingerprint of a piece's notes. */
+export function pieceSignature(piece) {
+  const text = [piece.time, piece.pickup ?? 0, piece.repeat ? 1 : 0, piece.rh ?? '', piece.lh ?? ''].join('|');
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+function barsOf(piece) {
+  const entry = store.get(BARS_KEY, {})[piece.id];
+  return entry?.sig === pieceSignature(piece) ? entry.bars : {};
+}
+
+/**
+ * Record one pass. `results` maps bar index → { notes, errors }, where errors
+ * already weighs early/late notes as half a mistake.
+ */
+export function recordBars(piece, results) {
+  const all = store.get(BARS_KEY, {});
+  const bars = { ...barsOf(piece) };
+  for (const [bar, { notes, errors }] of results) {
+    if (!notes) continue;
+    const rate = Math.min(1, errors / notes);
+    const old = bars[bar];
+    bars[bar] = {
+      trouble: Math.round((old ? old.trouble * 0.5 + rate * 0.5 : rate) * 1000) / 1000,
+      plays: (old?.plays ?? 0) + 1,
+    };
+  }
+  all[piece.id] = { sig: pieceSignature(piece), at: Date.now(), bars };
+  store.set(BARS_KEY, all);
+}
+
+/** Trouble score of every bar played so far: { [bar]: { trouble, plays } }. */
+export const barTrouble = (piece) => barsOf(piece);
+
+/**
+ * The passage most worth looping: the worst bar, together with a neighbour
+ * that is nearly as bad. null if every bar is fine (or nothing is recorded).
+ * Returns { from, to, trouble }.
+ */
+export function troubleSpot(piece, barCount) {
+  const bars = barsOf(piece);
+  const t = (b) => bars[b]?.trouble ?? 0;
+  let worst = -1;
+  for (let b = 0; b < barCount; b++) if (t(b) >= TROUBLE && (worst < 0 || t(b) > t(worst))) worst = b;
+  if (worst < 0) return null;
+  let from = worst;
+  let to = worst;
+  const left = worst > 0 ? t(worst - 1) : 0;
+  const right = worst < barCount - 1 ? t(worst + 1) : 0;
+  const neighbour = Math.max(left, right);
+  if (neighbour >= TROUBLE && neighbour >= t(worst) / 2) {
+    if (left >= right) from = worst - 1;
+    else to = worst + 1;
+  }
+  if (from === 0 && to >= barCount - 1) return null; // that's the whole piece
+  return { from, to, trouble: t(worst) };
+}
