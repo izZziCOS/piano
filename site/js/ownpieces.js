@@ -5,7 +5,7 @@
 import * as store from './storage.js';
 import { buildScore, renderScore, KEY_SIGNATURES, NOTE_LENGTHS } from './sheet.js';
 import { parseNote } from './notes.js';
-import { fromMusicXML } from './musicxml.js';
+import { fromMusicXML, readMusicXMLFile } from './musicxml.js';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'ownPieces';
@@ -215,8 +215,7 @@ export function init({ onSaved }) {
     if (!file) return;
     const status = $('own-import-status');
     try {
-      if (/\.mxl$/i.test(file.name)) throw new Error('That’s a compressed .mxl file. Export it as uncompressed MusicXML (.musicxml or .xml) and try again.');
-      const piece = fromMusicXML(await file.text());
+      const piece = fromMusicXML(await readMusicXMLFile(file));
       fillForm({ ...readForm(), ...piece, id: undefined });
       const notes = piece.warnings.length ? ` ${piece.warnings.join(' ')}` : '';
       status.textContent = `Imported “${piece.title}”. Check the notes below before saving.${notes}`;

@@ -47,8 +47,9 @@ function updateChip() {
   const today = stats.today();
   const goal = stats.getGoal();
   const streak = stats.streak();
-  $('goal-chip').innerHTML = `<span class="goal-ring" style="--p:${Math.min(1, today / goal)}"></span>
+  $('goal-chip').innerHTML = `<span class="goal-ring"></span>
     <span>${today}/${goal}</span>${streak ? `<span class="streak">🔥 ${streak}</span>` : ''}`;
+  $('goal-chip').querySelector('.goal-ring').style.setProperty('--p', Math.min(1, today / goal));
   $('goal-chip').setAttribute('aria-label', `Today ${today} of ${goal} notes; streak ${streak} days`);
   if (!$('view-progress').hidden) renderGoal();
 }
@@ -121,11 +122,14 @@ function renderHeatmap() {
   // Sharps and flats don't fit on one staff line-up: list them.
   const accs = notes.filter((n) => /[#b]/.test(n.name.slice(1))).sort((a, b) => a.accuracy - b.accuracy);
   $('heat-accidentals').innerHTML = accs.length
-    ? accs.map((n) => `<span class="chip heat-chip" style="--heat:${binOf(n.accuracy).color}" data-tip="${pretty(n.name)} (${n.clef}): ${Math.round(n.accuracy * 100)}% of ${n.seen}">
+    ? accs.map((n) => `<span class="chip heat-chip" data-heat="${binOf(n.accuracy).color}" data-tip="${pretty(n.name)} (${n.clef}): ${Math.round(n.accuracy * 100)}% of ${n.seen}">
         <span class="sw"></span>${pretty(n.name)} <span class="muted small">${n.clef} · ${Math.round(n.accuracy * 100)}%</span></span>`).join('')
     : '<span class="muted small">None yet. Turn on sharps and flats in the note quiz, or use a random sheet with key signatures.</span>';
-  $('heat-legend').innerHTML = BINS.map((b) => `<span><span class="sw" style="background:${b.color}"></span>${b.label}</span>`).join('')
+  $('heat-legend').innerHTML = BINS.map((b) => `<span><span class="sw" data-heat="${b.color}"></span>${b.label}</span>`).join('')
     + '<span><span class="sw unseen-sw"></span>not practised</span>';
+  // Colours are set here rather than in a style="" attribute, which the Content-Security-Policy blocks.
+  document.querySelectorAll('#heat-accidentals [data-heat]').forEach((el) => el.style.setProperty('--heat', el.dataset.heat));
+  document.querySelectorAll('#heat-legend [data-heat]').forEach((el) => { el.style.background = el.dataset.heat; });
   const weak = stats.weakest(8);
   $('weak-list').innerHTML = weak.length
     ? weak.map((w) => `<span class="chip">${pretty(w.name)} <span class="muted small">${w.clef} · ${Math.round(w.accuracy * 100)}%</span></span>`).join('')

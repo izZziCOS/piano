@@ -1,5 +1,6 @@
-// Import an (uncompressed, partwise) MusicXML file into the note format of
-// pieces.js, so it can be checked and edited before it's saved.
+// Import a (partwise) MusicXML file into the note format of pieces.js, so it
+// can be checked and edited before it's saved. Both uncompressed files
+// (.musicxml, .xml) and compressed ones (.mxl, a zip) are read.
 //
 // Piano scores: staff 1 becomes the right hand and staff 2 the left. A score
 // with two single-staff parts uses the first part for the right hand and the
@@ -14,6 +15,84 @@ const LENGTHS = [...NOTE_LENGTHS].sort((a, b) => b - a);
 const SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 const txt = (el, sel) => el?.querySelector(sel)?.textContent.trim() ?? null;
+
+/** The text of a MusicXML file the user picked: uncompressed, or a compressed .mxl. */
+export async function readMusicXMLFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK": a zip, whatever the file is called
+  return decodeText(zipped ? await scoreFromMxl(bytes) : bytes);
+}
+
+/** XML text from bytes: UTF-8 unless there's a UTF-16 byte-order mark (some editors export UTF-16). */
+function decodeText(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
+  return new TextDecoder().decode(bytes);
+}
+
+// A compressed MusicXML file is a zip. META-INF/container.xml names the score
+// inside it. Only "stored" and "deflate" entries occur in practice; deflate is
+// undone with the browser's DecompressionStream, so no zip library is needed.
+const NOT_MXL = 'That .mxl file couldn’t be opened. Try exporting uncompressed MusicXML (.musicxml) instead.';
+
+async function scoreFromMxl(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u16 = (at) => view.getUint16(at, true);
+  const u32 = (at) => view.getUint32(at, true);
+
+  // The end-of-central-directory record: 22 bytes, then a comment of up to 64 KB.
+  let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i--) {
+    if (u32(i) === 0x06054b50) { end = i; break; }
+  }
+  if (end < 0) throw new Error(NOT_MXL);
+
+  // The central directory lists every file: its name, compression, size and where it starts.
+  const entries = new Map();
+  let p = u32(end + 16);
+  for (let n = u16(end + 10); n > 0; n--) {
+    if (p + 46 > bytes.length || u32(p) !== 0x02014b50) throw new Error(NOT_MXL);
+    const nameLength = u16(p + 28);
+    const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLength));
+    entries.set(name, { method: u16(p + 10), size: u32(p + 20), offset: u32(p + 42) });
+    p += 46 + nameLength + u16(p + 30) + u16(p + 32);
+  }
+
+  const read = async (name) => {
+    const entry = entries.get(name);
+    if (!entry) return null;
+    const at = entry.offset;
+    if (at + 30 > bytes.length || u32(at) !== 0x04034b50) throw new Error(NOT_MXL);
+    const start = at + 30 + u16(at + 26) + u16(at + 28);
+    const data = bytes.subarray(start, start + entry.size);
+    if (entry.method === 0) return data;
+    if (entry.method !== 8) throw new Error(NOT_MXL);
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('This browser can’t open .mxl files. Export uncompressed MusicXML (.musicxml) instead.');
+    }
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    try {
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    } catch {
+      throw new Error(NOT_MXL);
+    }
+  };
+
+  let path = null;
+  const container = await read('META-INF/container.xml');
+  if (container) {
+    const doc = new DOMParser().parseFromString(decodeText(container), 'application/xml');
+    // The first rootfile is the score; others may be extra files such as a PDF of it.
+    const root = [...doc.getElementsByTagName('rootfile')]
+      .find((r) => !r.getAttribute('media-type') || /musicxml/.test(r.getAttribute('media-type')));
+    path = root?.getAttribute('full-path') ?? null;
+  }
+  // Files without a container: the first XML file that isn't in META-INF.
+  path ??= [...entries.keys()].find((n) => /\.(musicxml|xml)$/i.test(n) && !n.startsWith('META-INF/'));
+  const score = path ? await read(path) : null;
+  if (!score) throw new Error('There’s no score in that .mxl file.');
+  return score;
+}
 
 export function fromMusicXML(text) {
   const doc = new DOMParser().parseFromString(text, 'application/xml');

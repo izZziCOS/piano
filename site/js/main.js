@@ -10,6 +10,7 @@ import * as sheet from './sheetpractice.js';
 import * as ear from './ear.js';
 import * as progress from './progress.js';
 import * as sync from './sync.js';
+import { loadNotation } from './sheet.js';
 
 const $ = (id) => document.getElementById(id);
 const modes = { learn, sheet, quiz, ear, scales, play, progress };
@@ -27,11 +28,21 @@ sync.init();
 keyboard.on('noteon', (midi) => modes[current]?.onNote?.(midi));
 
 // --- Routing: #learn, #sheet, #sheet/<piece-id>?mode=name, #quiz, #scales, #play ---
-function route() {
+// Pages that draw sheet music wait for VexFlow, which is only loaded when first needed.
+const NEEDS_NOTATION = new Set(['learn', 'sheet', 'quiz', 'progress']);
+let routing = 0;
+async function route() {
+  const ticket = ++routing;
   const [path] = location.hash.slice(1).split('?');
   let [name, param] = path.split('/');
   name = ALIASES[name] ?? name;
   const next = name in modes ? name : 'learn';
+  if (NEEDS_NOTATION.has(next) && !window.Vex?.Flow) {
+    document.body.setAttribute('aria-busy', 'true');
+    await loadNotation();
+    document.body.removeAttribute('aria-busy');
+    if (ticket !== routing) return; // the address changed again while loading
+  }
   if (next === current) {
     if (param) modes[next].enter?.(param);
     return;
@@ -159,11 +170,11 @@ audio.onLoadState((state) => {
 window.addEventListener('pointerdown', audio.unlock, { once: true });
 window.addEventListener('keydown', audio.unlock, { once: true });
 
-// --- MIDI input (Chrome / Edge) ---
+// --- MIDI input (Chrome, Edge, Firefox; Firefox asks for permission first) ---
 const midiBtn = $('midi-btn');
 if (!navigator.requestMIDIAccess) {
   midiBtn.disabled = true;
-  midiBtn.title = 'This browser does not support Web MIDI. Try Chrome or Edge.';
+  midiBtn.title = 'This browser does not support Web MIDI. Try Chrome, Edge or Firefox.';
 } else {
   midiBtn.addEventListener('click', async () => {
     try {
@@ -180,6 +191,7 @@ if (!navigator.requestMIDIAccess) {
       bind();
     } catch {
       midiBtn.textContent = 'MIDI blocked';
+      midiBtn.title = 'MIDI access was refused. Allow it in the browser’s site permissions (in Firefox, accept the add-on prompt) and try again.';
     }
   });
 }
@@ -199,4 +211,27 @@ function onMidi({ data }) {
     midiHeld.delete(note);
     keyboard.release(note);
   }
+}
+
+// --- First visit: a short pointer to where to begin ---
+const welcome = $('welcome');
+const hasProgress = () => ['practiceLog', 'learnDone', 'noteStats', 'pieces'].some((k) => {
+  const v = store.get(k);
+  return v && Object.keys(v).length > 0;
+});
+if (!store.get('welcomed', false) && !hasProgress()) {
+  welcome.hidden = false;
+  const dismiss = () => { welcome.hidden = true; store.set('welcomed', true); };
+  welcome.addEventListener('click', (e) => { if (e.target.closest('a, button')) dismiss(); });
+}
+
+// --- Offline use and installing as an app (sw.js) ---
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('sw.js').then(async () => {
+    // Keep the piano samples for offline use once they've all loaded (they're
+    // usually in the HTTP cache by then, so nothing is downloaded twice).
+    await audio.pianoLoaded;
+    const registration = await navigator.serviceWorker.ready;
+    registration.active?.postMessage({ type: 'store-media', urls: audio.sampleUrls() });
+  }).catch(() => { /* not available (e.g. blocked storage): the site works online as before */ });
 }

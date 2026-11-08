@@ -14,7 +14,7 @@ A piano-learning website that runs entirely in the browser. It has no build step
 | **Free play** | The piano on its own. |
 | **Progress** | Today's notes against a daily goal, your streak, a 5-week practice calendar, a heatmap of accuracy for every note on the treble and bass staves, and correct notes per minute over time for the reading tests and the quiz speed tests (with a table view). The top bar shows today's goal and your streak on every page. |
 
-**Your own pieces:** in *Sheet music*, press **＋ Add your own piece**. Write the notes in the format described under [Adding a piece](#adding-a-piece), or import an uncompressed **MusicXML** file (`.musicxml` or `.xml`, as exported by MuseScore, Finale, Sibelius or Dorico). The editor checks the notes as you type, explains what's wrong (for example a note that runs past a bar line), and draws a preview. The MusicXML import reads the first voice of each staff, splits lengths that can't be drawn as one note into tied notes, rounds tuplets, and leaves out grace notes and repeats; it tells you when it had to do any of that. Your pieces work in all three modes, and they're synced with the rest of your progress.
+**Your own pieces:** in *Sheet music*, press **＋ Add your own piece**. Write the notes in the format described under [Adding a piece](#adding-a-piece), or import a **MusicXML** file (compressed `.mxl`, or uncompressed `.musicxml` or `.xml`, as exported by MuseScore, Finale, Sibelius or Dorico). The editor checks the notes as you type, explains what's wrong (for example a note that runs past a bar line), and draws a preview. The MusicXML import reads the first voice of each staff, splits lengths that can't be drawn as one note into tied notes, rounds tuplets, and leaves out grace notes and repeats; it tells you when it had to do any of that. Your pieces work in all three modes, and they're synced with the rest of your progress.
 
 **Spaced repetition:** every note you name in a reading test or the note quiz is recorded per clef. Notes you miss, or answer slowly, are chosen more often in random sheets and the quiz, and they make up the *weak notes* sheet. Notes you know well come up less often.
 
@@ -22,21 +22,29 @@ A piano-learning website that runs entirely in the browser. It has no build step
 
 - **Mouse or touch**
 - **Computer keyboard**: `A`–`;` for the white keys, `W E T Y U O P` for the black keys, and `Z`/`X` to change octave
-- **A MIDI keyboard**: press *Connect MIDI* (Chrome and Edge). A MIDI sustain pedal works too.
+- **A MIDI keyboard**: press *Connect MIDI* (Chrome, Edge and Firefox; Firefox asks you to allow it first. Safari doesn't support MIDI). A MIDI sustain pedal works too.
 
 **Sound** is a sampled Yamaha C5 grand: the [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), recorded at **three dynamic levels**, so soft notes really sound softer and darker. The medium layer (about 2.3 MB) loads first and the piano is playable as soon as it's in; the soft and loud layers follow in the background, about 6.9 MB in total. The built-in synth plays until then. Dynamics in the music (*p*, *mf*, *f*…) change how hard playback strikes the keys. Hold **Space** for the sustain pedal, or click *Pedal* to keep it down.
 
 **Sync between devices (optional):** on the Progress page, paste a GitHub token that has only the **gist** permission ([create one](https://github.com/settings/tokens/new?scopes=gist&description=Piano%20Practice%20sync)). The site keeps your progress in a secret gist called `piano-practice.json` and syncs it when you open the site, every 15 seconds or so while you practise, and when you leave. Use the same token on each device, and set it to expire in **30 to 90 days**. When two devices practise between syncs, their progress is merged: daily counts and best scores take the higher value, speed tests and finished chapters are combined, and for your own pieces the newest edit or deletion wins. When you leave the page it does a full sync (download, merge, upload), so it never overwrites progress that another device uploaded in the meantime. Device settings such as volume aren't synced. The token stays in that browser only. Every repository's site under one `<user>.github.io` address shares the same browser storage, so your other sites there could read it: don't give it any other permission. To keep it separate, publish this site on its own [custom domain](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site) (or subdomain), which gives it storage of its own.
 
+**Offline and as an app:** after one visit the whole site works without a connection, piano samples included, so it's fine on a music stand with patchy Wi-Fi. The browser can also install it as an app (*Install* in the address bar on desktop, *Add to Home Screen* on a tablet or phone). When you're online it always fetches the latest version.
+
+**First visit:** a small banner points beginners to *Learn to read* and readers to a random sheet. Close it, or follow either link, and it doesn't come back.
+
 **Light or dark:** the site follows your system's setting. The button at the top right switches between *Auto*, *Light* and *Dark*, and each device remembers its choice.
 
-Sheet music is drawn with [VexFlow](https://www.vexflow.com) (MIT licence), which is included in `site/vendor/`. The music-symbol part of the [Noto Music](https://github.com/notofonts/music) font (SIL Open Font License) is in `site/fonts/`, so the site makes no requests to other servers (except GitHub, if you turn on sync). All progress is stored in your browser.
+Sheet music is drawn with [VexFlow](https://www.vexflow.com) (MIT licence), which is included in `site/vendor/`. The music-symbol part of the [Noto Music](https://github.com/notofonts/music) font (SIL Open Font License) is in `site/fonts/`, so the site makes no requests to other servers (except GitHub, if you turn on sync). All progress is stored in your browser. VexFlow (about 560 KB) is only loaded once you open a page with sheet music, so Free play, Ear training and Scales open faster.
+
+**Security:** a Content-Security-Policy lets the page load only its own files and contact only GitHub, so even a mistake that let someone's text into the page as HTML couldn't run a script or send your sync token anywhere. GitHub Pages can't send headers, so the policy is a `<meta>` tag in `index.html`. The Docker setup also sends it as a header, along with a few other security headers (see `nginx.conf`). The one inline script (which applies the theme before the page is drawn) is allowed by its hash: if you change it, update the hash in both places. The tests check this.
 
 ## Project layout
 
 ```
 site/                 ← everything that gets published
   index.html
+  sw.js               ← service worker: offline use (bump VERSION when its file list changes)
+  manifest.webmanifest, icons/   ← installing as an app
   css/style.css
   js/                 ← ES modules (main.js is the entry point)
     pieces.js         ← sheet-music library
@@ -44,7 +52,7 @@ site/                 ← everything that gets published
     sheetpractice.js  ← play-along, at-tempo and name-the-notes modes
     generator.js      ← random and weak-note sheets
     ownpieces.js      ← your own pieces: storage, checking and the editor
-    musicxml.js       ← MusicXML import
+    musicxml.js       ← MusicXML import (.musicxml, .xml and compressed .mxl)
     stats.js          ← per-note spaced-repetition statistics, daily goal, streak, speed history
     ear.js            ← ear training
     progress.js       ← progress page
@@ -100,7 +108,7 @@ npm install
 npm test
 ```
 
-The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also check the new features: keyboard hints, timing scores (a robot player hits notes on the beat and deliberately skips some), notation (fingering, ties, dynamics, repeats), ear training, the progress page, syncing two devices through a mocked GitHub API, the quiz speed test, looping a passage with speed-ups, writing, importing (MusicXML), editing and deleting your own pieces, and the theme switch. They also check that nothing is loaded from other servers. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
+The tests serve `site/` locally and drive a real Chrome through puppeteer-core. They check every section, all pieces and 144 combinations of random-sheet settings, playing and grading, note spelling, the pedal, sample loading and the phone layout. They also check the new features: keyboard hints, timing scores (a robot player hits notes on the beat and deliberately skips some), notation (fingering, ties, dynamics, repeats), ear training, the progress page, syncing two devices through a mocked GitHub API, the quiz speed test, looping a passage with speed-ups, writing, importing (MusicXML and .mxl), editing and deleting your own pieces, the theme switch, the welcome banner, that VexFlow loads only when needed, the Content-Security-Policy (and that nginx sends the same one), and working offline after one visit. They also check that nothing is loaded from other servers. They also fail if anything logs a console error. If Chrome isn't installed in the usual place, set `CHROME_PATH`.
 
 ## Deploy to GitHub Pages
 

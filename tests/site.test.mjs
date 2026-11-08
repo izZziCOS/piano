@@ -6,6 +6,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
@@ -13,6 +15,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'site
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.png': 'image/png', '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
 };
 
 function findChrome() {
@@ -30,12 +33,14 @@ function findChrome() {
 }
 
 let server;
+let offline = false; // when true, the server drops every connection, as if the network were gone
 let browser;
 let base;
 const problems = []; // console errors/warnings, page errors, failed requests — across all tests
 
 before(async () => {
   server = http.createServer((req, res) => {
+    if (offline) { req.socket.destroy(); return; }
     const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     let file = path.join(ROOT, url);
     if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
@@ -680,8 +685,7 @@ test('your own pieces: write, check, save, play, edit and delete', async () => {
   await page.close();
 });
 
-test('your own pieces: import MusicXML', async () => {
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+const WALTZ_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1">
   <work><work-title>Little Waltz</work-title></work>
   <identification><creator type="composer">A. Tester</creator></identification>
@@ -713,6 +717,9 @@ test('your own pieces: import MusicXML', async () => {
     </measure>
   </part>
 </score-partwise>`;
+
+test('your own pieces: import MusicXML', async () => {
+  const xml = WALTZ_XML;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'piano-'));
   const file = path.join(dir, 'waltz.musicxml');
   fs.writeFileSync(file, xml);
@@ -736,6 +743,174 @@ test('your own pieces: import MusicXML', async () => {
   assert.equal(await text(page, '#sheet-title'), 'Little Waltz');
   assert.match(await text(page, '#sheet-meta'), /3\/4 time · key of G major/);
   fs.rmSync(dir, { recursive: true, force: true });
+  await page.close();
+});
+
+/** A zip file (as in .mxl) built by hand: `files` maps names to text; `store` names files kept uncompressed. */
+function makeZip(files, { store = [] } = {}) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const raw = Buffer.from(text);
+    const method = store.includes(name) ? 0 : 8;
+    const data = method ? zlib.deflateRawSync(raw) : raw;
+    const nameBuf = Buffer.from(name);
+    const crc = zlib.crc32 ? zlib.crc32(raw) : 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 4); entry.writeUInt16LE(20, 6);
+    entry.writeUInt16LE(method, 10); entry.writeUInt32LE(crc, 16); entry.writeUInt32LE(data.length, 20);
+    entry.writeUInt32LE(raw.length, 24); entry.writeUInt16LE(nameBuf.length, 28); entry.writeUInt32LE(offset, 42);
+    parts.push(local, nameBuf, data);
+    central.push(entry, nameBuf);
+    offset += 30 + nameBuf.length + data.length;
+  }
+  const dir = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  const count = Object.keys(files).length;
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10);
+  end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, dir, end]);
+}
+
+test('your own pieces: import compressed MusicXML (.mxl)', async () => {
+  const container = `<?xml version="1.0" encoding="UTF-8"?>
+<container><rootfiles><rootfile full-path="score/waltz.musicxml" media-type="application/vnd.recordare.musicxml+xml"/></rootfiles></container>`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'piano-'));
+  // As MuseScore writes them: an uncompressed mimetype first, then the container and the score.
+  fs.writeFileSync(path.join(dir, 'waltz.mxl'), makeZip({
+    mimetype: 'application/vnd.recordare.musicxml',
+    'META-INF/container.xml': container,
+    'score/waltz.musicxml': WALTZ_XML,
+  }, { store: ['mimetype'] }));
+  // No container, and the score stored uncompressed: the first XML file is used.
+  fs.writeFileSync(path.join(dir, 'plain.mxl'), makeZip({ 'waltz.xml': WALTZ_XML }, { store: ['waltz.xml'] }));
+  fs.writeFileSync(path.join(dir, 'broken.mxl'), Buffer.from('PK this is not really a zip file'));
+  const page = await open('#sheet');
+  await page.click('#own-add');
+  for (const name of ['waltz.mxl', 'plain.mxl']) {
+    await page.$eval('#own-import-status', (e) => { e.textContent = ''; });
+    await (await page.$('#own-file')).uploadFile(path.join(dir, name));
+    await page.waitForFunction(() => /Imported/.test(document.getElementById('own-import-status').textContent));
+    assert.equal(await page.$eval('#own-title', (e) => e.value), 'Little Waltz', name);
+    assert.equal(await page.$eval('#own-rh', (e) => e.value), 'D4 | !p G4@1~ G4:0.5 F#4:0.5 A4 | B4:2~ B4:0.5 R:0.5', name);
+  }
+  await (await page.$('#own-file')).uploadFile(path.join(dir, 'broken.mxl'));
+  await page.waitForFunction(() => /couldn’t be opened/.test(document.getElementById('own-import-status').textContent));
+  assert.equal(await page.$eval('#own-import-status', (e) => e.dataset.tone), 'bad');
+  fs.rmSync(dir, { recursive: true, force: true });
+  await page.close();
+});
+
+test('VexFlow loads only when a page shows sheet music', async () => {
+  const page = await open('#play');
+  const vexRequested = () => page.evaluate(() => performance.getEntriesByType('resource').some((r) => r.name.includes('vexflow')));
+  assert.equal(await vexRequested(), false, 'not loaded for free play');
+  await page.goto(base + '#ear');
+  await wait(150);
+  assert.equal(await vexRequested(), false, 'not loaded for ear training');
+  await page.click('.tabs a[data-view="sheet"]');
+  await page.waitForFunction(() => document.querySelectorAll('#sheet .vf-stavenote').length > 0);
+  assert.equal(await page.$eval('#view-sheet', (e) => e.hidden), false);
+  await page.close();
+});
+
+test('first visit: a welcome banner points to where to start, and can be dismissed', async () => {
+  const page = await open('#learn');
+  assert.equal(await page.$eval('#welcome', (e) => e.hidden), false, 'shown on a first visit');
+  await page.click('#welcome a[href="#sheet/random"]');
+  await page.waitForFunction(() => !document.getElementById('view-sheet').hidden);
+  assert.equal(await page.$eval('#welcome', (e) => e.hidden), true, 'gone after following a link');
+  assert.equal(await text(page, '#sheet-title'), 'Random sheet');
+  await page.reload({ waitUntil: 'networkidle0' });
+  assert.equal(await page.$eval('#welcome', (e) => e.hidden), true, 'stays dismissed');
+  await page.close();
+
+  const closing = await open('#play');
+  await closing.click('.welcome-close');
+  assert.equal(await closing.$eval('#welcome', (e) => e.hidden), true, 'the close button dismisses it');
+  await closing.close();
+
+  // Someone who has already practised (e.g. before this banner existed) doesn't see it.
+  const returning = await open('#learn', {
+    init: () => localStorage.setItem('piano-practice:v1', JSON.stringify({ learnDone: ['staff'] })),
+  });
+  assert.equal(await returning.$eval('#welcome', (e) => e.hidden), true);
+  await returning.close();
+});
+
+test('Content-Security-Policy: the theme script is allowed, injected scripts are not', async () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const policy = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)[1];
+  const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.equal(inline.length, 1, 'one inline script');
+  const hash = `'sha256-${crypto.createHash('sha256').update(inline[0]).digest('base64')}'`;
+  assert.ok(policy.includes(hash), `the policy allows the theme script: ${hash}`);
+  assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval/);
+  const nginx = fs.readFileSync(path.join(ROOT, '..', 'nginx.conf'), 'utf8');
+  const header = nginx.match(/add_header Content-Security-Policy "([^"]+)"/)[1];
+  assert.equal(header, `${policy}; frame-ancestors 'none'`, 'nginx sends the same policy');
+
+  // The theme script still runs under the policy.
+  const page = await open('#learn', { init: () => localStorage.setItem('piano-practice:v1', '{"theme":"dark"}') });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  // Markup that sneaks in a script or an inline handler is blocked.
+  const before = problems.length;
+  const blocked = await page.evaluate(async () => {
+    const seen = [];
+    document.addEventListener('securitypolicyviolation', (e) => seen.push(e.effectiveDirective));
+    const box = document.createElement('div');
+    box.innerHTML = '<img src="favicon.svg" onload="window.pwned = 1">';
+    document.body.append(box);
+    const s = document.createElement('script');
+    s.textContent = 'window.pwned = 2';
+    document.head.append(s);
+    await new Promise((r) => setTimeout(r, 300));
+    return { pwned: window.pwned, seen };
+  });
+  assert.equal(blocked.pwned, undefined, 'nothing injected ran');
+  assert.ok(blocked.seen.some((d) => d.startsWith('script-src')), 'the browser reported the violation');
+  await wait(100);
+  problems.splice(before); // those violations were expected
+  await page.close();
+});
+
+test('works offline and can be installed', async () => {
+  // The manifest, and the icons it names.
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.webmanifest'), 'utf8'));
+  assert.equal(manifest.display, 'standalone');
+  for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(ROOT, icon.src)), icon.src);
+  assert.ok(manifest.icons.some((i) => i.sizes === '512x512' && i.purpose === 'maskable'));
+  // The service worker's list of files matches the site: every script, nothing missing.
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  const shell = [...sw.match(/const SHELL = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  for (const f of shell.filter((f) => f !== './')) assert.ok(fs.existsSync(path.join(ROOT, f)), `${f} exists`);
+  for (const f of fs.readdirSync(path.join(ROOT, 'js'))) assert.ok(shell.includes(`js/${f}`), `js/${f} is stored for offline use`);
+
+  const page = await open('#sheet');
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, { timeout: 10000 });
+  const stored = (name) => page.evaluate(async (n) => (await (await caches.open(n)).keys()).length, name);
+  await until(async () => (await stored('piano-shell-v1')) === shell.length, 10000, 'files stored');
+  // The samples are stored once the piano has loaded.
+  await until(async () => (await stored('piano-media-v1')) >= 90, 30000, 'samples stored');
+
+  offline = true;
+  try {
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => document.querySelectorAll('#sheet .vf-stavenote').length > 0, { timeout: 10000 });
+    for (const view of ['learn', 'quiz', 'scales', 'progress']) {
+      await page.goto(base + '#' + view);
+      await wait(200);
+      assert.equal(await page.$eval(`#view-${view}`, (e) => e.hidden), false, `#${view} works offline`);
+    }
+    await until(() => page.evaluate(() => document.getElementById('sound-status').textContent === ''), 10000, 'piano loaded from storage');
+  } finally {
+    offline = false;
+  }
   await page.close();
 });
 

@@ -55,9 +55,8 @@ export function loadPiano() {
   setLoadState('loading');
   // Decode with an offline context so no audio output is created before a gesture.
   const decoder = new OfflineAudioContext(1, 1, 44100);
-  const base = new URL('../samples/salamander/', import.meta.url);
   const loadLayer = (layer) => Promise.allSettled(SAMPLE_NOTES.map(async ([name, midi]) => {
-    const res = await fetch(new URL(`${name}-${layer}.mp3`, base));
+    const res = await fetch(sampleUrl(name, layer));
     if (!res.ok) throw new Error(`${name}-${layer}: ${res.status}`);
     buffers[layer].set(midi, await decoder.decodeAudioData(await res.arrayBuffer()));
   }));
@@ -69,8 +68,17 @@ export function loadPiano() {
         if (loadState === 'failed') return;
       }
     }
+    allLayersLoaded();
   })();
 }
+
+const SAMPLE_BASE = new URL('../samples/salamander/', import.meta.url);
+const sampleUrl = (name, layer) => new URL(`${name}-${layer}.mp3`, SAMPLE_BASE).href;
+/** Every sample file's address (for the service worker to keep them for offline use). */
+export const sampleUrls = () => LAYERS.flatMap((layer) => SAMPLE_NOTES.map(([name]) => sampleUrl(name, layer)));
+let allLayersLoaded;
+/** Resolves once all three layers of the sampled piano have loaded. */
+export const pianoLoaded = new Promise((resolve) => { allLayersLoaded = resolve; });
 
 function setLoadState(s) {
   loadState = s;

@@ -79,6 +79,24 @@ export function buildScore(piece, { onIssue } = {}) {
   return { piece, num, den, barLen, pickup, hands, barCount, steps };
 }
 
+let notationLoading = null;
+/**
+ * Load VexFlow (about 560 KB), which draws the notation. Pages without sheet
+ * music never need it, so it's fetched the first time a page with music opens
+ * (main.js waits for this before showing such a page). Resolves even if
+ * loading fails: renderScore then says so, and the next call tries again.
+ */
+export function loadNotation() {
+  if (window.Vex?.Flow) return Promise.resolve();
+  return notationLoading ??= new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = new URL('../vendor/vexflow-4.2.5.js', import.meta.url).href;
+    script.onload = resolve;
+    script.onerror = () => { script.remove(); notationLoading = null; resolve(); };
+    document.head.append(script);
+  });
+}
+
 /**
  * Draw the score into `container`. Each non-rest event gets an `el` property
  * pointing at its SVG group so the caller can highlight it.

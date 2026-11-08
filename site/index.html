@@ -2,19 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Only this site's own files may load, and only GitHub (sync) may be contacted.
+       The hash allows the theme script below; update it if that script changes
+       (the tests check it, and nginx.conf sends the same policy as a header). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-z4Y/mflN5LAfRn7pvlLoKXeM0TSyqiMznSobqMFLzAw='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://api.github.com; media-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Piano Practice</title>
   <meta name="description" content="Learn piano in your browser: a course in reading sheet music, play-along pieces, a note quiz, ear training, scales and chords, and progress tracking. Works with a MIDI keyboard.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <script>
-    // Apply a chosen light/dark theme before the page is drawn, so it doesn't flash.
-    try {
-      const theme = JSON.parse(localStorage.getItem('piano-practice:v1') || '{}').theme;
-      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
-    } catch { /* storage blocked: follow the system */ }
-  </script>
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1d1c1a" media="(prefers-color-scheme: dark)">
+  <!-- Apply a chosen light/dark theme before the page is drawn, so it doesn't flash.
+       Kept on one line so its CSP hash doesn't depend on line endings. -->
+  <script>try { const t = JSON.parse(localStorage.getItem('piano-practice:v1') || '{}').theme; if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch { /* storage blocked: follow the system */ }</script>
   <link rel="stylesheet" href="css/style.css">
-  <script src="vendor/vexflow-4.2.5.js"></script>
   <script type="module" src="js/main.js"></script>
 </head>
 <body>
@@ -37,6 +40,12 @@
   </header>
 
   <main>
+    <aside id="welcome" class="welcome" aria-label="Where to start" hidden>
+      <p><strong>New to reading music?</strong> <a href="#learn">Start here</a> with the staff and the notes.</p>
+      <p><strong>Already read?</strong> <a href="#sheet/random">Try a random sheet</a>.</p>
+      <button type="button" class="welcome-close" aria-label="Close">×</button>
+    </aside>
+
     <!-- Learn to read -->
     <section id="view-learn" class="view" hidden>
       <div class="lessons-layout">
@@ -330,7 +339,7 @@
         <ul>
           <li><strong>Mouse or touch:</strong> click the keys below. Drag across them to glide.</li>
           <li><strong>Computer keyboard:</strong> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd> <kbd>G</kbd> <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> <kbd>;</kbd> are the white keys, and <kbd>W</kbd> <kbd>E</kbd> <kbd>T</kbd> <kbd>Y</kbd> <kbd>U</kbd> <kbd>O</kbd> <kbd>P</kbd> are the black keys. <kbd>Z</kbd> and <kbd>X</kbd> move down or up an octave. Hold <kbd>Space</kbd> for the sustain pedal.</li>
-          <li><strong>MIDI keyboard:</strong> plug it in and press <em>Connect MIDI</em> below. Works in Chrome and Edge.</li>
+          <li><strong>MIDI keyboard:</strong> plug it in and press <em>Connect MIDI</em> below. Works in Chrome, Edge and Firefox (Firefox asks you to allow it first), but not in Safari.</li>
           <li>Middle C (C4) has a small dot under it, so you can always find your place.</li>
         </ul>
       </div>

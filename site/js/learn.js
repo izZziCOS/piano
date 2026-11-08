@@ -275,7 +275,9 @@ function show(i) {
   $('learn-prev').disabled = current === 0;
   $('learn-next').textContent = current === CHAPTERS.length - 1 ? 'Finish ✓' : 'Got it, next →';
   renderToc();
-  $('view-learn').scrollIntoView({ block: 'start' });
+  // Back to the top of the new chapter, but only if it's scrolled out of sight
+  // (otherwise opening the page would scroll the top bar and welcome banner away).
+  if ($('view-learn').getBoundingClientRect().top < 0) $('view-learn').scrollIntoView({ block: 'start' });
 }
 
 function playExample(j, btn) {

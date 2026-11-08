@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Piano Practice",
+  "short_name": "Piano",
+  "description": "Learn to read sheet music and practise piano: play-along pieces, a note quiz, ear training, scales and chords. Works offline and with a MIDI keyboard.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f3ee",
+  "theme_color": "#ffffff",
+  "categories": ["education", "music"],
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
