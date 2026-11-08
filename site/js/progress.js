@@ -30,6 +30,7 @@ export function init() {
   stats.onPractice(updateChip);
   updateChip();
   initSync();
+  $('speed-source').addEventListener('change', () => { speedSourceChosen = true; renderSpeed(); });
   const tip = $('chart-tip');
   document.addEventListener('pointermove', (e) => {
     const t = e.target.closest?.('[data-tip]');
@@ -132,13 +133,26 @@ function renderHeatmap() {
     : '<span class="muted small">No weak spots recorded yet.</span>';
 }
 
+// Speed tests come from "Name the notes" (typing names) and the note quiz
+// (playing them), which run at different speeds, so each has its own chart.
+let speedSourceChosen = false;
+const isQuiz = (h) => h.piece === 'quiz';
+
 function renderSpeed() {
-  const history = stats.speedHistory();
+  const all = stats.speedHistory();
+  const source = $('speed-source');
+  // Until you pick one, show the kind of test you took last.
+  if (!speedSourceChosen && all.length) source.value = isQuiz(all[all.length - 1]) ? 'quiz' : 'name';
+  const quiz = source.value === 'quiz';
+  const history = all.filter((h) => isQuiz(h) === quiz);
   const box = $('speed-chart');
   const table = $('speed-table');
   if (history.length < 2) {
+    const how = quiz
+      ? 'Set the Timer in the <a href="#quiz">note quiz</a> to 1 minute'
+      : 'Take a timed test in <a href="#sheet/random?mode=name">Name the notes</a> (Timer: 1 minute)';
     box.innerHTML = `<p class="empty-state">${history.length ? 'One speed test so far.' : 'No speed tests yet.'}
-      Take a timed test in <a href="#sheet/random?mode=name">Name the notes</a> (Timer: 1 minute) to start the chart.</p>`;
+      ${how} to start the chart.</p>`;
     table.innerHTML = '';
     return;
   }

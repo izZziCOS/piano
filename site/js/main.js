@@ -101,6 +101,27 @@ window.addEventListener('blur', () => {
   syncPedal();
 });
 
+// --- Light / dark theme: follow the system, or pick one (applied early by a script in index.html) ---
+const THEMES = { auto: ['◐', 'Auto theme'], light: ['☀', 'Light theme'], dark: ['☾', 'Dark theme'] };
+const NEXT_THEME = { auto: 'light', light: 'dark', dark: 'auto' };
+function setTheme(theme) {
+  if (theme === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  const [icon, label] = THEMES[theme];
+  const btn = $('theme-btn');
+  btn.innerHTML = `<span aria-hidden="true">${icon}</span><span class="theme-label">${label.split(' ')[0]}</span>`;
+  btn.setAttribute('aria-label', `${label}. Switch to ${THEMES[NEXT_THEME[theme]][1].toLowerCase()}`);
+  btn.title = btn.getAttribute('aria-label');
+}
+let theme = store.get('theme', 'auto');
+if (!(theme in THEMES)) theme = 'auto';
+setTheme(theme);
+$('theme-btn').addEventListener('click', () => {
+  theme = NEXT_THEME[theme];
+  store.set('theme', theme);
+  setTheme(theme);
+});
+
 // --- Toolbar ---
 $('oct-down').addEventListener('click', () => setBase(keyboard.base - 12));
 $('oct-up').addEventListener('click', () => setBase(keyboard.base + 12));

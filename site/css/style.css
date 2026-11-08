@@ -1,3 +1,14 @@
+/* Noto Music (SIL OFL 1.1, see fonts/NOTO-MUSIC-OFL.txt), music-symbol subset only:
+   used for 𝄪 and 𝄫, which many system fonts lack. Self-hosted so nothing loads from elsewhere. */
+@font-face {
+  font-family: "Noto Music";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/noto-music.woff2") format("woff2");
+  unicode-range: U+25CC, U+2669-266F, U+1D000-1D0F5, U+1D100-1D245;
+}
+
 :root {
   --bg: #f5f3ee;
   --surface: #ffffff;
@@ -57,6 +68,32 @@
     --shadow: none;
     color-scheme: dark;
   }
+}
+/* The same dark palette when it is picked with the theme button. */
+:root[data-theme="dark"] {
+  --bg: #131211;
+  --surface: #1d1c1a;
+  --surface-2: #272522;
+  --text: #ece9e2;
+  --muted: #a19b90;
+  --border: #36332f;
+  --accent: #6f95f0;
+  --accent-soft: #24304d;
+  --accent-text: #0e1220;
+  --good: #4cc27f;
+  --good-soft: #1b3a28;
+  --bad: #ec6b6b;
+  --bad-soft: #432222;
+  --gold: #f0b93a;
+  --paper: #f6f2e8;
+  --white-key: #e9e5dc;
+  --white-key-down: #c9c4b8;
+  --black-key: #0b0b0a;
+  --black-key-down: #34322f;
+  --key-border: #8a857b;
+  --dock: #0e0d0c;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -540,6 +577,7 @@ button.link:focus-visible { outline: 2px solid var(--accent); }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --heat-1: #184f95; --heat-2: #2a78d6; --heat-3: #86b6ef; }
 }
+:root[data-theme="dark"] { --heat-1: #184f95; --heat-2: #2a78d6; --heat-3: #86b6ef; }
 #view-progress > .card { margin-top: 16px; }
 .progress-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .goal-big { font-size: 1.1rem; margin: 0 0 10px; }
@@ -607,4 +645,76 @@ button.link:focus-visible { outline: 2px solid var(--accent); }
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- Theme switch ---------- */
+.theme-btn {
+  font: 600 0.85rem var(--font);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.theme-btn:hover { border-color: var(--accent); }
+.theme-btn [aria-hidden] { font-size: 1rem; line-height: 1; }
+@media (max-width: 640px) { .theme-label { display: none; } }
+
+/* ---------- Quiz speed ---------- */
+.stats:has(> :nth-child(5)) { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+.quiz-clock { text-align: center; font-size: 1.15rem; font-weight: 700; margin: 0 0 10px; }
+.quiz-card .result { margin: 0 0 12px; }
+
+/* ---------- Passage looping (at tempo) ---------- */
+.passage { display: inline-flex; align-items: center; gap: 6px; font-size: 0.92rem; color: var(--muted); }
+#view-sheet:not([data-loop="true"]) .loop-only { display: none; }
+#sheet-loop-log:empty { display: none; }
+.vf-stavenote.outside { opacity: 0.3; }
+
+/* ---------- Your own pieces ---------- */
+.add-own { margin: 10px 8px 0; }
+.own-row { margin-top: 8px; }
+.own-dialog {
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 48px rgb(0 0 0 / 0.25);
+}
+.own-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+.own-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.own-import .status { font-weight: 400; min-height: 0; }
+.own-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 12px; }
+.own-grid input[type="text"] { width: 15em; }
+.own-grid input[type="number"], .own-dialog textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.own-grid input[type="number"] { width: 5em; }
+.own-hand { display: block; font-weight: 600; color: var(--text); margin: 6px 0 4px; }
+.own-dialog textarea { display: block; width: 100%; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+.own-help { margin: 10px 0; font-size: 0.88rem; }
+.own-help summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.own-help table { border-collapse: collapse; margin-top: 6px; }
+.own-help td { padding: 4px 12px 4px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.own-help code { white-space: nowrap; }
+.own-errors span { display: block; }
+.own-errors:empty { display: none; }
+.own-preview { min-height: 80px; margin: 8px 0 14px; overflow-x: auto; }
+.own-actions { justify-content: flex-end; }
+@media (max-width: 640px) {
+  .own-dialog { padding: 16px; }
+  .own-grid input[type="text"] { width: 100%; }
+  .own-grid label:has(input[type="text"]) { flex: 1 1 100%; }
 }

@@ -9,6 +9,7 @@
 // storage key, and are never part of the synced file.
 import * as store from './storage.js';
 import * as stats from './stats.js';
+import { mergeLists } from './ownpieces.js';
 
 const API = 'https://api.github.com';
 const FILE = 'piano-practice.json';
@@ -22,7 +23,7 @@ const MAX_KEYS = ['quizBestStreak'];
 const isMaxKey = (k) => MAX_KEYS.includes(k) || k.startsWith('earBest:');
 const MAP_MAX_KEYS = ['practiceLog', 'pieces', 'piecesNamed', 'piecesTempo', 'bestSpeed'];
 const SYNCED = (k) => isMaxKey(k) || MAP_MAX_KEYS.includes(k)
-  || ['noteStats', 'noteStatsResetAt', 'speedHistory', 'learnDone', 'dailyGoal', 'dailyGoalAt'].includes(k);
+  || ['noteStats', 'noteStatsResetAt', 'speedHistory', 'learnDone', 'dailyGoal', 'dailyGoalAt', 'ownPieces'].includes(k);
 
 // ------------------------------------------------------------ state
 
@@ -76,6 +77,8 @@ export function merge(a = {}, b = {}) {
     else if (k === 'speedHistory') {
       const byTime = new Map([...x, ...y].map((h) => [h.at, h]));
       out[k] = [...byTime.values()].sort((p, q) => p.at - q.at).slice(-200);
+    } else if (k === 'ownPieces') {
+      out[k] = mergeLists(x, y); // per piece, the newest edit or deletion wins
     } else if (k === 'noteStats') {
       // Per note, keep the record that has seen more answers (it includes the other's history).
       out[k] = { ...x };
@@ -112,17 +115,19 @@ class ApiError extends Error {
 
 async function api(path, { method = 'GET', body, token = state.token, keepalive = false } = {}) {
   let res;
+  const payload = body ? JSON.stringify(body) : undefined;
   try {
     res = await fetch(API + path, {
       method,
       cache: 'no-store',
-      keepalive,
+      // keepalive lets a request finish after the page closes, but browsers cap its size at 64 KB.
+      keepalive: keepalive && (payload?.length ?? 0) < 60000,
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${token}`,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: payload,
     });
   } catch {
     throw new ApiError(0, 'Can’t reach GitHub. Check your connection; progress is still saved on this device.');
@@ -189,8 +194,11 @@ export function disconnect() {
   setStatus('', 'Disconnected. Progress stays on this device; the gist is still on GitHub.');
 }
 
-/** Pull, merge, and push if anything changed. Safe to call at any time. */
-export function syncNow() {
+/**
+ * Pull, merge, and push if anything changed. Safe to call at any time.
+ * `keepalive` lets the final upload finish even if the page is closing.
+ */
+export function syncNow({ keepalive = false } = {}) {
   if (!isConnected()) return Promise.resolve();
   if (busy) { again = true; return busy; }
   clearTimeout(timer);
@@ -216,7 +224,7 @@ export function syncNow() {
         stats.reload();
         updated = true;
       }
-      if (remote && !same(merged, remote)) await api(`/gists/${state.gistId}`, { method: 'PATCH', body: fileBody(merged) });
+      if (remote && !same(merged, remote)) await api(`/gists/${state.gistId}`, { method: 'PATCH', body: fileBody(merged), keepalive });
       state.lastSync = Date.now();
       saveState();
       status = { tone: 'good', text: updated ? 'Synced. Progress from your other devices was added.' : 'Synced.' };
@@ -242,11 +250,11 @@ export function init() {
   document.addEventListener('visibilitychange', () => {
     if (!isConnected()) return;
     if (document.visibilityState === 'hidden' && timer) {
-      // Leaving the page with unsynced practice: send it now. Remote changes
-      // made elsewhere meanwhile are kept by those devices and merged back later.
-      clearTimeout(timer);
-      timer = 0;
-      api(`/gists/${state.gistId}`, { method: 'PATCH', body: fileBody(progressOf(store.getAll())), keepalive: true }).catch(() => {});
+      // Leaving the page with unsynced practice: sync it now. This is a full
+      // pull-merge-push, so progress another device uploaded in the meantime
+      // stays in the gist. If the page closes before the pull finishes, nothing
+      // is overwritten; the practice is still saved here and syncs next visit.
+      syncNow({ keepalive: true });
     } else if (document.visibilityState === 'visible' && Date.now() - (state.lastSync ?? 0) > STALE) {
       syncNow();
     }

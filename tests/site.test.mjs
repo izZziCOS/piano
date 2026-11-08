@@ -5,13 +5,14 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'site');
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
-  '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.png': 'image/png',
+  '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.png': 'image/png', '.woff2': 'font/woff2',
 };
 
 function findChrome() {
@@ -59,9 +60,11 @@ after(async () => {
 });
 
 // Each page gets a fresh profile, so saved progress/stats don't leak between tests.
-async function open(hash, { width = 1366, height = 900, mobile = false } = {}) {
+// `init` runs in the page before any of the site's scripts.
+async function open(hash, { width = 1366, height = 900, mobile = false, init } = {}) {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
+  if (init) await page.evaluateOnNewDocument(init);
   page.on('pageerror', (e) => problems.push(`[${hash}] page error: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warn' || m.type() === 'warning') problems.push(`[${hash}] console.${m.type()}: ${m.text()}`);
@@ -74,6 +77,14 @@ async function open(hash, { width = 1366, height = 900, mobile = false } = {}) {
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Wait until `fn()` is true (checked every 50 ms). */
+async function until(fn, timeout = 5000, what = 'condition') {
+  const end = Date.now() + timeout;
+  while (!(await fn())) {
+    if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`);
+    await wait(50);
+  }
+}
 const text = (page, sel) => page.$eval(sel, (e) => e.textContent.trim());
 const clickKey = async (page, midi) => {
   await page.$eval(`.key[data-midi="${midi}"]`, (e) => e.scrollIntoView({ inline: 'center', block: 'nearest' }));
@@ -287,7 +298,7 @@ test('note quiz accepts the right key and records it', async () => {
 });
 
 test('phone layout has no sideways scrolling', async () => {
-  for (const hash of ['#learn', '#sheet/twinkle-hands', '#sheet/random?mode=name', '#quiz', '#scales']) {
+  for (const hash of ['#learn', '#sheet/twinkle-hands', '#sheet/random?mode=name', '#sheet/minuet-g?mode=tempo', '#quiz', '#scales']) {
     const page = await open(hash, { width: 390, height: 844, mobile: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, `${hash} overflows by ${overflow}px`);
@@ -319,24 +330,28 @@ test('keyboard hints can be turned off and come back when stuck', async () => {
   await page.close();
 });
 
-test('at-tempo mode scores timing, including missed notes', async () => {
-  const page = await open('#sheet/rh-c-position?mode=tempo');
-  await page.select('#sheet-hints', 'always');
-  await page.$eval('#sheet-tempo', (e) => { e.value = 140; e.dispatchEvent(new Event('input')); });
-  // A robot player: press each key the moment its hint appears, but skip every 6th note.
-  await page.evaluate(() => {
+/** A robot player: press each key the moment its hint appears, skipping every `skip`-th note (0: none). */
+function startRobot(page, skip = 0) {
+  return page.evaluate((skipEvery) => {
     let n = 0;
     new MutationObserver((muts) => {
       // classList.remove() queues a record even when nothing changes, so look at each key once per batch.
       const fresh = new Set(muts.filter((m) => !(m.oldValue ?? '').includes('target')).map((m) => m.target));
       for (const k of fresh) {
         if (!k.classList.contains('target')) continue;
-        if (++n % 6 === 0) continue;
+        if (skipEvery && ++n % skipEvery === 0) continue;
         k.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, button: 0 }));
         setTimeout(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9 })), 50);
       }
     }).observe(document.getElementById('keyboard'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
-  });
+  }, skip);
+}
+
+test('at-tempo mode scores timing, including missed notes', async () => {
+  const page = await open('#sheet/rh-c-position?mode=tempo');
+  await page.select('#sheet-hints', 'always');
+  await page.$eval('#sheet-tempo', (e) => { e.value = 140; e.dispatchEvent(new Event('input')); });
+  await startRobot(page, 6); // skips every 6th note
   await page.click('#sheet-start');
   await page.waitForFunction(() => !document.getElementById('sheet-result').hidden, { timeout: 20000 });
   const result = await text(page, '#sheet-result');
@@ -501,12 +516,253 @@ test('progress syncs between two devices through a GitHub gist', async () => {
   await a.waitForFunction(() => document.getElementById('goal-today').textContent === '7');
   assert.match(await text(a, '#goal-chip'), /^7\//);
 
+  // Leaving the page does a full sync: progress another device uploaded in the
+  // meantime stays in the gist instead of being overwritten.
+  const file = gists.get('g1').files['piano-practice.json'];
+  const content = JSON.parse(file.content);
+  content.progress.practiceLog['2026-02-02'] = 5; // uploaded by a third device
+  file.content = JSON.stringify(content);
+  await a.select('#goal-select', '100'); // a change on A, waiting to be synced
+  await a.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await until(() => remote().dailyGoal === 100, 5000, 'the goal change to reach the gist');
+  assert.equal(remote().practiceLog['2026-02-02'], 5, "the other device's practice is kept");
+  assert.equal(remote().practiceLog[todayKey], 7);
+
+  // Your own pieces merge per piece: the newest edit or deletion wins.
+  const pieces = await a.evaluate(async () => {
+    const { merge } = await import('./js/sync.js');
+    return merge(
+      { ownPieces: [{ id: 'a', title: 'Old', updatedAt: 1 }, { id: 'b', title: 'B', updatedAt: 5 }] },
+      { ownPieces: [{ id: 'a', title: 'New', updatedAt: 2 }, { id: 'b', deleted: true, updatedAt: 6 }, { id: 'c', title: 'C', updatedAt: 3 }] },
+    ).ownPieces;
+  });
+  assert.deepEqual(pieces.map((p) => `${p.id}:${p.deleted ? 'deleted' : p.title}`).sort(), ['a:New', 'b:deleted', 'c:C']);
+
   // Disconnecting forgets the token on that device only.
   await a.click('#sync-disconnect');
   assert.ok(!(await a.$eval('#sync-off', (e) => e.hidden)));
   assert.equal(await a.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:sync')).token), undefined);
   await a.close();
   await b.close();
+});
+
+test('note quiz: response time, notes per minute and a speed test', async () => {
+  // With Math.random fixed at 0 the quiz alternates C4, D4, C4, D4… on the treble staff.
+  const page = await open('#quiz', { init: () => { Math.random = () => 0; } });
+  const prompt = () => text(page, '#quiz-prompt');
+  await clickKey(page, 60);
+  assert.match(await prompt(), /^Correct, that’s C4 · \d+\.\d s$/, 'answer time shown');
+  await until(async () => /^Play this note/.test(await prompt()));
+  await clickKey(page, 62);
+  await until(async () => /^Play this note/.test(await prompt()));
+  assert.match(await text(page, '#quiz-time'), /^\d+\.\d s$/, 'average time');
+  assert.equal(await text(page, '#quiz-npm'), '–', 'notes per minute waits for a few answers');
+  await clickKey(page, 60);
+  await until(async () => /^Play this note/.test(await prompt()));
+  assert.equal(await text(page, '#quiz-score'), '3 / 3');
+  assert.match(await text(page, '#quiz-npm'), /^\d+$/, 'notes per minute');
+
+  // A short speed test (a 3-second option added just for the test).
+  await page.evaluate(() => {
+    const timer = document.getElementById('quiz-timer');
+    timer.add(new Option('3 seconds', '3'));
+    timer.value = '3';
+    timer.dispatchEvent(new Event('change'));
+  });
+  assert.match(await text(page, '#quiz-clock'), /0:03 · speed test: the clock starts with your first note/);
+  assert.equal(await text(page, '#quiz-score'), '0 / 0', 'a new test starts from zero');
+  let next = 60; // D4 was showing, so the test starts on C4
+  while (await page.$eval('#quiz-result', (e) => e.hidden)) {
+    await until(async () => /^(Play this note|Time)/.test(await prompt()) || !(await page.$eval('#quiz-result', (e) => e.hidden)), 5000, 'the next question');
+    if (!(await page.$eval('#quiz-result', (e) => e.hidden))) break;
+    await clickKey(page, next);
+    next = next === 60 ? 62 : 60;
+    await until(async () => !/^Play this note/.test(await prompt()) || !(await page.$eval('#quiz-result', (e) => e.hidden)), 5000, 'the answer');
+  }
+  const result = await text(page, '#quiz-result');
+  assert.match(result, /\d+ correct notes? per minute · 100% accuracy · new record/);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')));
+  assert.equal(saved.speedHistory.at(-1).piece, 'quiz', 'speed test recorded');
+  assert.ok(saved.bestSpeed['quiz:treble:3'] > 0, 'best speed kept per setting');
+
+  // The Progress page shows quiz speed tests separately from reading tests.
+  await page.goto(base + '#progress');
+  await wait(200);
+  assert.equal(await page.$eval('#speed-source', (e) => e.value), 'quiz', 'shows the latest kind of test');
+  assert.match(await text(page, '#speed-chart'), /One speed test so far/);
+  await page.select('#speed-source', 'name');
+  assert.match(await text(page, '#speed-chart'), /No speed tests yet/);
+  await page.close();
+});
+
+test('at tempo: loop a few bars and speed up after clean passes', async () => {
+  const page = await open('#sheet/rh-c-position?mode=tempo');
+  await page.select('#sheet-hints', 'always');
+  await page.$eval('#sheet-tempo', (e) => { e.value = 120; e.dispatchEvent(new Event('input')); });
+  await page.select('#sheet-from', '1');
+  await page.select('#sheet-to', '2'); // bars 2–3: eight quarter notes
+  assert.match(await text(page, '#sheet-status'), /bars 2–3/);
+  assert.equal(await page.$$eval('#sheet .vf-stavenote:not(.outside)', (n) => n.length), 8, 'the passage stays clear');
+  assert.equal(await page.$$eval('#sheet .vf-stavenote.outside', (n) => n.length), 9, 'the other bars fade');
+  await page.click('#sheet-loop');
+  await page.select('#sheet-speedup', '4');
+  await startRobot(page);
+  await page.click('#sheet-start');
+  await page.waitForFunction(() => /^Pass 1:/.test(document.getElementById('sheet-loop-log').textContent), { timeout: 15000 });
+  const log1 = await text(page, '#sheet-loop-log');
+  assert.match(log1, /^Pass 1: 8 on time · 0 early · 0 late · 0 missed\. Clean pass! Next pass at 124 bpm\.$/);
+  await page.waitForFunction(() => /^Pass 2:/.test(document.getElementById('sheet-loop-log').textContent), { timeout: 15000 });
+  assert.match(await text(page, '#sheet-loop-log'), /Clean pass! Next pass at 128 bpm/);
+  assert.equal(await text(page, '#sheet-bpm'), '128');
+  assert.equal(await page.$eval('#sheet-result', (e) => e.hidden), true, 'no result card while looping');
+  await page.click('#sheet-start'); // Stop
+  assert.equal(await text(page, '#sheet-loop-log'), 'Stopped after 2 passes, 2 clean, tempo 120 → 128 bpm.');
+  assert.equal(await text(page, '#sheet-start'), '▶ Start');
+  await page.close();
+});
+
+test('your own pieces: write, check, save, play, edit and delete', async () => {
+  const page = await open('#sheet');
+  page.on('dialog', (d) => d.accept()); // the delete confirmation
+  const setField = (id, value) => page.$eval(id, (e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+  const errors = async () => { await wait(400); return text(page, '#own-errors'); };
+
+  await page.click('#own-add');
+  assert.equal(await page.$eval('#own-dialog', (d) => d.open), true);
+  await page.type('#own-title', 'My tune');
+  await setField('#own-rh', 'C4 D4 E4 F4:2 | G4:4');
+  assert.match(await errors(), /Right hand, bar 1: F4 \(2 beats\) runs past the bar line/);
+  await setField('#own-rh', 'C4 D4 E4 F4 | g4:4');
+  assert.match(await errors(), /“g4:4” isn’t a note I can read\. Write note letters as capitals/);
+  await setField('#own-rh', 'C4 D4 E4 F4:3');
+  assert.match(await errors(), /3 beats long|runs past/);
+  await setField('#own-rh', '!mf C4@1 D4 E4 F4 | G4:4');
+  await setField('#own-lh', 'C3+E3+G3:4 | C3+G3:4');
+  assert.equal(await errors(), '', 'no problems');
+  assert.equal(await page.$$eval('#own-preview .vf-stavenote', (n) => n.length), 7, 'preview drawn');
+  await page.click('#own-save');
+  await wait(300);
+  assert.equal(await page.$eval('#own-dialog', (d) => d.open), false);
+  assert.equal(await text(page, '#sheet-title'), 'My tune');
+  assert.match(await text(page, '#sheet-list'), /Your pieces\s*My tune/);
+  assert.equal(await page.$eval('#sheet-own', (e) => e.hidden), false, 'edit and delete shown');
+
+  // Play it with the right hand.
+  await page.select('#sheet-hands', 'rh');
+  for (const m of [60, 62, 64, 65, 67]) await clickKey(page, m);
+  await wait(200);
+  assert.match(await text(page, '#sheet-result'), /100% accuracy/);
+
+  // It's still there after a reload.
+  await page.reload({ waitUntil: 'networkidle0' });
+  await wait(200);
+  assert.equal(await text(page, '#sheet-title'), 'My tune');
+
+  // Edit: rename it.
+  await page.click('#sheet-edit');
+  assert.equal(await page.$eval('#own-title', (e) => e.value), 'My tune');
+  await setField('#own-title', 'My second tune');
+  await page.click('#own-save');
+  await wait(300);
+  assert.equal(await text(page, '#sheet-title'), 'My second tune');
+  assert.equal(await page.$$eval('#sheet-list .lesson-name', (n) => n.filter((x) => /My/.test(x.textContent)).length), 1, 'edited, not copied');
+
+  // Delete it.
+  await page.click('#sheet-delete');
+  await wait(300);
+  assert.doesNotMatch(await text(page, '#sheet-list'), /My second tune/);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).ownPieces);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].deleted, true, 'a tombstone stops sync bringing it back');
+  await page.close();
+});
+
+test('your own pieces: import MusicXML', async () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <work><work-title>Little Waltz</work-title></work>
+  <identification><creator type="composer">A. Tester</creator></identification>
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="0" implicit="yes">
+      <attributes><divisions>2</divisions><key><fifths>1</fifths><mode>major</mode></key>
+        <time><beats>3</beats><beat-type>4</beat-type></time><staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>
+      <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>100</per-minute></metronome></direction-type><sound tempo="100"/></direction>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <backup><duration>2</duration></backup>
+      <note><rest/><duration>2</duration><voice>5</voice><staff>2</staff></note>
+    </measure>
+    <measure number="1">
+      <direction><direction-type><dynamics><p/></dynamics></direction-type><staff>1</staff></direction>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration><tie type="start"/><voice>1</voice><staff>1</staff>
+        <notations><technical><fingering>1</fingering></technical><tied type="start"/></notations></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><tie type="stop"/><voice>1</voice><staff>1</staff></note>
+      <note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>1</duration><voice>1</voice><staff>1</staff></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff></note>
+      <backup><duration>6</duration></backup>
+      <note><pitch><step>G</step><octave>2</octave></pitch><duration>6</duration><voice>5</voice><staff>2</staff></note>
+      <note><chord/><pitch><step>D</step><octave>3</octave></pitch><duration>6</duration><voice>5</voice><staff>2</staff></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>5</duration><voice>1</voice><staff>1</staff></note>
+      <note><rest/><duration>1</duration><voice>1</voice><staff>1</staff></note>
+    </measure>
+  </part>
+</score-partwise>`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'piano-'));
+  const file = path.join(dir, 'waltz.musicxml');
+  fs.writeFileSync(file, xml);
+  const page = await open('#sheet');
+  await page.click('#own-add');
+  await (await page.$('#own-file')).uploadFile(file);
+  await page.waitForFunction(() => /Imported/.test(document.getElementById('own-import-status').textContent));
+  const value = (id) => page.$eval(id, (e) => e.value);
+  assert.equal(await value('#own-title'), 'Little Waltz');
+  assert.equal(await value('#own-composer'), 'A. Tester');
+  assert.equal(await value('#own-key'), 'G');
+  assert.equal(await value('#own-time'), '3/4');
+  assert.equal(await value('#own-bpm'), '100');
+  assert.equal(await value('#own-pickup'), '1');
+  assert.equal(await value('#own-rh'), 'D4 | !p G4@1~ G4:0.5 F#4:0.5 A4 | B4:2~ B4:0.5 R:0.5', 'tie, fingering, dynamic and a split 2.5-beat note');
+  assert.equal(await value('#own-lh'), 'R | G2+D3:3 | R:3', 'chord, and an empty bar filled with a rest');
+  assert.equal(await text(page, '#own-errors'), '');
+  assert.ok(await page.$$eval('#own-preview .vf-stavenote', (n) => n.length) >= 8, 'preview drawn');
+  await page.click('#own-save');
+  await wait(300);
+  assert.equal(await text(page, '#sheet-title'), 'Little Waltz');
+  assert.match(await text(page, '#sheet-meta'), /3\/4 time · key of G major/);
+  fs.rmSync(dir, { recursive: true, force: true });
+  await page.close();
+});
+
+test('light/dark theme switch, and nothing loads from other servers', async () => {
+  const outside = [];
+  const page = await open('#learn', { init: () => {} });
+  page.on('request', (r) => { if (!r.url().startsWith(base) && !r.url().startsWith('data:')) outside.push(r.url()); });
+  const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  const light = await bg();
+  assert.match(await page.$eval('#theme-btn', (b) => b.getAttribute('aria-label')), /^Auto theme/);
+  await page.click('#theme-btn');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light');
+  await page.click('#theme-btn');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  assert.notEqual(await bg(), light, 'dark even though the system is light');
+  await page.reload({ waitUntil: 'networkidle0' });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark', 'remembered');
+  await page.click('#theme-btn');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), undefined, 'back to following the system');
+  // The music-symbol font is served from the site itself.
+  await page.goto(base + '#scales');
+  const fonts = await page.evaluate(async () => (await document.fonts.load('16px "Noto Music"', '𝄪')).length);
+  assert.ok(fonts >= 1, 'Noto Music loads');
+  await wait(200);
+  assert.deepEqual(outside, [], 'no requests to other servers');
+  await page.close();
 });
 
 test('no console errors, failed requests or warnings anywhere', () => {

@@ -2,7 +2,8 @@
 //  - play:  play the notes on the piano; the music waits for you. Keyboard
 //           hints can be always on, fade out as you get notes right, or off.
 //  - tempo: play along in time after a count-in; every note is scored as on
-//           time, early, late or missed.
+//           time, early, late or missed. You can pick a range of bars, loop it,
+//           and have the tempo go up after every clean pass.
 //  - name:  a reading test; type the name of each highlighted note (e.g. F, F#, Bb).
 //           Optionally timed. Every answer feeds the spaced-repetition stats.
 import { PIECES } from './pieces.js';
@@ -12,15 +13,19 @@ import { noteName } from './notes.js';
 import * as audio from './audio.js';
 import * as store from './storage.js';
 import * as stats from './stats.js';
+import * as own from './ownpieces.js';
 
 const $ = (id) => document.getElementById(id);
 const HAND_LABEL = { rh: 'Right hand', lh: 'Left hand', both: 'Both hands' };
 const pretty = (name) => name.replace('#', '♯').replace(/(?<=[A-G])b/, '♭');
 const keyLabel = (k) => (isMinor(k) ? `${pretty(k.slice(0, -1))} minor` : `${pretty(k)} major`);
+/** The built-in library followed by your own pieces. */
+const allPieces = () => [...PIECES, ...own.list()];
+const findPiece = (id) => allPieces().find((p) => p.id === id);
 const BUILDER_FIELDS = ['clef', 'keys', 'mode', 'range', 'rhythm', 'time', 'chords', 'accidentals'];
 
 let kb;
-let piece = null; // entry from PIECES
+let piece = null; // entry from PIECES (or one of your own pieces)
 let source = null; // the notes actually shown (generated pieces differ each time)
 let score = null;
 let mode = 'play';
@@ -39,6 +44,7 @@ let stepMistakes = 0;
 
 // tempo mode
 let tempo = null; // { expected[], wrong, stopAudio, timers[], spb }
+let loop = null; // while looping a passage: { passes, clean, startBpm, timer }
 
 // name mode
 let items = [];
@@ -79,7 +85,36 @@ export function init(keyboard) {
   });
   $('sheet-metronome').checked = store.get('sheetMetronome', true);
   $('sheet-metronome').addEventListener('change', () => store.set('sheetMetronome', $('sheet-metronome').checked));
-  $('sheet-start').addEventListener('click', () => (tempo?.running ? restart() : startTempo()));
+  $('sheet-start').addEventListener('click', () => (tempo?.running || loop ? restart() : startTempo()));
+  // Passage: a range of bars, optionally looped and sped up after each clean pass.
+  $('sheet-from').addEventListener('change', () => {
+    if (+$('sheet-from').value > +$('sheet-to').value) $('sheet-to').value = $('sheet-from').value;
+    markRange();
+    restart();
+  });
+  $('sheet-to').addEventListener('change', () => {
+    if (+$('sheet-to').value < +$('sheet-from').value) $('sheet-from').value = $('sheet-to').value;
+    markRange();
+    restart();
+  });
+  $('sheet-loop').checked = store.get('sheetLoop', false);
+  $('view-sheet').dataset.loop = $('sheet-loop').checked;
+  $('sheet-loop').addEventListener('change', () => {
+    store.set('sheetLoop', $('sheet-loop').checked);
+    $('view-sheet').dataset.loop = $('sheet-loop').checked;
+  });
+  $('sheet-speedup').value = String(store.get('sheetSpeedup', 4));
+  $('sheet-speedup').addEventListener('change', () => store.set('sheetSpeedup', +$('sheet-speedup').value));
+
+  // Your own pieces
+  own.init({ onSaved: (id) => load(id) });
+  $('own-add').addEventListener('click', () => own.open());
+  $('sheet-edit').addEventListener('click', () => piece?.own && own.open(piece));
+  $('sheet-delete').addEventListener('click', () => {
+    if (!piece?.own || !window.confirm(`Delete “${piece.title}”? This can’t be undone.`)) return;
+    own.remove(piece.id);
+    load(PIECES.find((p) => !p.generated).id);
+  });
   $('sheet-listen').addEventListener('click', toggleListen);
   $('sheet-restart').addEventListener('click', restart);
   $('sheet-new').addEventListener('click', () => load(piece.id));
@@ -90,7 +125,10 @@ export function init(keyboard) {
     if (a === 'again') restart();
     else if (a === 'new') load(piece.id);
     else if (a === 'weak') load('weak');
-    else load(PIECES[PIECES.indexOf(piece) + 1].id);
+    else {
+      const list = allPieces();
+      load(list[list.findIndex((p) => p.id === piece.id) + 1].id);
+    }
   });
   $('sheet-answer').addEventListener('keydown', onAnswerKey);
   // On touch screens use the on-screen buttons instead of popping up the phone keyboard.
@@ -129,7 +167,7 @@ function builderSettings() {
 /** Route parameter: a piece id, optionally with ?mode=name&clef=bass&range=ledger… */
 export function enter(param) {
   const query = new URLSearchParams(location.hash.split('?')[1] ?? '');
-  if (param && PIECES.some((p) => p.id === param)) {
+  if (param && findPiece(param)) {
     let changed = false;
     for (const f of BUILDER_FIELDS) {
       const v = query.get(f === 'mode' ? 'keymode' : f);
@@ -153,6 +191,7 @@ export function enter(param) {
 export function exit() {
   stop();
   stopTempo();
+  endLoop();
   clearTimeout(autoTimer);
   clearInterval(clock);
   kb.clear('target');
@@ -166,27 +205,33 @@ function renderList() {
   const played = store.get('pieces', {});
   const named = store.get('piecesNamed', {});
   const timed = store.get('piecesTempo', {});
-  const levels = [...new Set(PIECES.map((p) => p.level))];
+  const pieces = allPieces();
+  const levels = [...new Set(pieces.map((p) => p.level))];
   $('sheet-list').innerHTML = levels.map((level) => `
     <li class="group-label">${level}</li>
-    ${PIECES.filter((p) => p.level === level).map((p) => {
+    ${pieces.filter((p) => p.level === level).map((p) => {
       const best = ({ name: named, tempo: timed }[mode] ?? played)[p.id] ?? 0;
       const tag = p.generated ? 'New every time' : p.rh && p.lh ? 'Both hands' : p.rh ? 'Right hand' : 'Left hand';
-      const current = piece === p ? ' aria-current="true"' : '';
+      const current = piece?.id === p.id ? ' aria-current="true"' : '';
       const starsHtml = p.generated ? '' : `<span class="stars${best ? '' : ' empty'}" aria-label="${best} of 3 stars">${stars(best)}</span>`;
       return `<li><button data-id="${p.id}"${current}>
-        <span class="lesson-name">${p.title}</span>
-        <span class="lesson-meta"><span>${p.generated ? tag : `${p.composer} · ${tag}`}</span>${starsHtml}</span>
+        <span class="lesson-name">${escapeHtml(p.title)}</span>
+        <span class="lesson-meta"><span>${p.generated ? tag : `${escapeHtml(p.composer)} · ${tag}`}</span>${starsHtml}</span>
       </button></li>`;
     }).join('')}`).join('');
 }
 
+const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 function load(id, { keepSession = false } = {}) {
-  piece = PIECES.find((p) => p.id === id) ?? PIECES[0];
+  piece = findPiece(id) ?? PIECES[0];
   store.set('sheetPiece', piece.id);
   stop();
   stopTempo();
+  endLoop();
+  $('sheet-loop-log').textContent = '';
   clearTimeout(autoTimer);
+  $('sheet-own').hidden = !piece.own;
   $('sheet-builder').hidden = piece.generated !== 'random';
   $('sheet-new').hidden = !piece.generated;
   $('sheet-title').textContent = piece.title;
@@ -230,6 +275,7 @@ function load(id, { keepSession = false } = {}) {
   $('sheet-hands').disabled = options.length === 1;
   $('sheet-tempo').value = piece.bpm;
   $('sheet-bpm').textContent = piece.bpm;
+  fillBars();
   draw();
   restart({ keepSession });
 }
@@ -249,6 +295,40 @@ function draw() {
   // Note names on the sheet would give the answers away in the reading test.
   renderScore($('sheet'), score, { noteNames: mode === 'play' && $('sheet-names').checked });
   paint();
+  markRange();
+}
+
+// ---------------------------------------------------------------- passage (bar range)
+
+/** Where bar `b` starts, in beats from the start of the piece. */
+const barStart = (b) => (score.pickup ? (b === 0 ? 0 : score.pickup + (b - 1) * score.barLen) : b * score.barLen);
+const barLabel = (b) => (score.pickup ? (b === 0 ? 'pickup' : String(b)) : String(b + 1));
+
+function fillBars() {
+  const n = score?.barCount ?? 0;
+  const options = Array.from({ length: n }, (_, b) => `<option value="${b}">${barLabel(b)}</option>`).join('');
+  for (const id of ['sheet-from', 'sheet-to']) {
+    $(id).innerHTML = options;
+    $(id).disabled = n < 2;
+  }
+  $('sheet-from').value = '0';
+  $('sheet-to').value = String(Math.max(0, n - 1));
+}
+
+const barRange = () => ({ from: +$('sheet-from').value, to: +$('sheet-to').value });
+const wholePiece = () => {
+  const r = barRange();
+  return r.from === 0 && r.to >= score.barCount - 1;
+};
+
+/** In tempo mode, fade the bars outside the chosen passage. */
+function markRange() {
+  if (!score) return;
+  const { from, to } = barRange();
+  const active = mode === 'tempo' && !wholePiece();
+  for (const evs of Object.values(score.hands)) {
+    for (const e of evs) e.el?.classList.toggle('outside', active && (e.bar < from || e.bar > to));
+  }
 }
 
 function paint(playing = -1) {
@@ -295,6 +375,7 @@ function restart({ keepSession = false } = {}) {
   if (!score) return;
   stop();
   stopTempo();
+  endLoop();
   clearTimeout(autoTimer);
   done = false;
   busy = false;
@@ -577,7 +658,7 @@ function finishNaming() {
 
 // ---------------------------------------------------------------- shared
 
-function showResult({ accuracy, detail, extra = '', rate = true }) {
+function showResult({ accuracy, detail, extra = '', rate = true, showAccuracy = rate, icon = '⏱' }) {
   const earned = accuracy >= 95 ? 3 : accuracy >= 80 ? 2 : 1;
   let isBest = false;
   if (rate && !piece.generated) {
@@ -588,12 +669,13 @@ function showResult({ accuracy, detail, extra = '', rate = true }) {
   }
   renderList();
   setStatus('');
-  const hasNext = !piece.generated && PIECES.indexOf(piece) < PIECES.length - 1;
+  const list = allPieces();
+  const hasNext = !piece.generated && list.findIndex((p) => p.id === piece.id) < list.length - 1;
   const result = $('sheet-result');
   result.hidden = false;
   result.innerHTML = `
-    ${rate ? `<p class="result-stars" aria-label="${earned} of 3 stars">${stars(earned)}</p>` : '<p class="result-stars">⏱</p>'}
-    <p><strong>${rate ? `${accuracy}% accuracy, ` : ''}</strong>${detail}${isBest ? ' · new best' : ''}</p>
+    ${rate ? `<p class="result-stars" aria-label="${earned} of 3 stars">${stars(earned)}</p>` : `<p class="result-stars">${icon}</p>`}
+    <p><strong>${showAccuracy ? `${accuracy}% accuracy, ` : ''}</strong>${detail}${isBest ? ' · new best' : ''}</p>
     ${extra}
     <div class="btn-row center">
       <button class="btn btn-ghost" data-action="again">Try again</button>
@@ -640,7 +722,10 @@ function stop() {
 function readyTempo() {
   idx = 0;
   paint();
-  setStatus('Press Start. You’ll hear one bar of clicks, then play along in time. The other hand plays itself.');
+  const { from, to } = barRange();
+  setStatus(wholePiece()
+    ? 'Press Start. You’ll hear one bar of clicks, then play along in time. The other hand plays itself.'
+    : `Press Start to play bars ${barLabel(from)}–${barLabel(to)} after one bar of clicks.${$('sheet-loop').checked ? ' They repeat until you press Stop.' : ''}`);
   $('sheet-start').textContent = '▶ Start';
 }
 
@@ -659,35 +744,44 @@ function startTempo() {
   const countIn = Math.round(score.barLen / clickBeats);
   const t0 = audio.now() + 0.25;
   const musicStart = t0 + countIn * clickSec;
+
+  // The whole piece (with its repeat), or just the chosen bars, played once.
+  const whole = wholePiece();
+  const { from, to } = barRange();
   const last = score.steps[score.steps.length - 1];
-  const totalBeats = last.time + last.beats;
+  const offset = whole ? 0 : barStart(from); // beat where the passage starts
+  const endBeat = whole ? last.time + last.beats : barStart(to + 1);
+  const totalBeats = endBeat - offset;
+  const steps = score.steps.map((st, i) => ({ st, i }))
+    .filter(({ st }) => whole || (st.pass === 1 && st.events[0].bar >= from && st.events[0].bar <= to));
+  const when = (st) => musicStart + (st.time - offset) * spb;
 
   const clicks = [];
   for (let k = 0; k < countIn; k++) clicks.push({ at: t0 + k * clickSec, accent: k === 0 });
   if ($('sheet-metronome').checked) {
     for (let k = 0; k * clickBeats < totalBeats - 1e-6; k++) {
-      const beat = k * clickBeats - score.pickup;
+      const beat = offset + k * clickBeats - score.pickup;
       const accent = Math.abs(((beat % score.barLen) + score.barLen) % score.barLen) < 1e-6;
       clicks.push({ at: musicStart + k * clickSec, accent });
     }
   }
-  const notes = score.steps.flatMap((st) => st.events.filter((e) => !isRequired(e)).flatMap((e) =>
-    e.midis.map((midi) => ({ midi, at: musicStart + st.time * spb, dur: e.play * spb, velocity: e.vel * 0.85 }))));
+  const notes = steps.flatMap(({ st }) => st.events.filter((e) => !isRequired(e)).flatMap((e) =>
+    e.midis.map((midi) => ({ midi, at: when(st), dur: Math.min(e.play, endBeat - st.time) * spb, velocity: e.vel * 0.85 }))));
 
   const expected = [];
-  score.steps.forEach((st, i) => {
+  for (const { st, i } of steps) {
     for (const e of st.events.filter(isRequired)) {
       for (const midi of e.midis) {
-        expected.push({ midi, step: i, event: e, perf: audio.heardAt(musicStart + st.time * spb), result: null, dt: 0 });
+        expected.push({ midi, step: i, event: e, perf: audio.heardAt(when(st)), result: null, dt: 0 });
       }
     }
-  });
+  }
 
   const timers = [];
   const at = (audioTime, fn) => timers.push(setTimeout(fn, Math.max(0, audio.heardAt(audioTime) - performance.now())));
   for (let k = 0; k < countIn; k++) at(t0 + k * clickSec, () => setStatus(`Count-in: ${'● '.repeat(k + 1)}${'○ '.repeat(countIn - k - 1)}`));
-  score.steps.forEach((st, i) => at(musicStart + st.time * spb, () => {
-    if (i === 0) setStatus('Play!');
+  steps.forEach(({ st, i }, n) => at(when(st), () => {
+    if (n === 0) setStatus(loop ? `Pass ${loop.passes + 1}. Play!` : 'Play!');
     idx = i;
     kb.clear('target');
     paint();
@@ -698,7 +792,7 @@ function startTempo() {
   const window = tempoWindow(spb);
   timers.push(setTimeout(finishTempo, audio.heardAt(musicStart + totalBeats * spb) - performance.now() + window));
 
-  tempo = { expected, wrong: 0, timers, spb, running: true, stopAudio: audio.schedule({ notes, clicks }) };
+  tempo = { expected, wrong: 0, timers, spb, whole, running: true, stopAudio: audio.schedule({ notes, clicks }) };
   $('sheet-start').textContent = '■ Stop';
 }
 
@@ -765,9 +859,55 @@ function finishTempo() {
   const avg = hits.length ? hits.reduce((a, x) => a + x.dt, 0) / hits.length : 0;
   const tendency = Math.abs(avg) < 25 ? 'Your timing is centred on the beat.'
     : `On average you play ${Math.round(Math.abs(avg))} ms ${avg < 0 ? 'early (rushing)' : 'late (dragging)'}.`;
+  const detail = `${ontime} on time · ${early} early · ${late} late · ${missed} missed${t.wrong ? ` · ${t.wrong} wrong ${t.wrong === 1 ? 'note' : 'notes'}` : ''}`;
+
+  if ($('sheet-loop').checked) return nextPass({ clean: missed === 0 && t.wrong === 0, detail });
+  endLoop(); // Loop was switched off during this pass: it was the last one.
+  const { from, to } = barRange();
   showResult({
     accuracy,
-    detail: `${ontime} on time · ${early} early · ${late} late · ${missed} missed${t.wrong ? ` · ${t.wrong} wrong ${t.wrong === 1 ? 'note' : 'notes'}` : ''}`,
+    detail: t.whole ? detail : `Bars ${barLabel(from)}–${barLabel(to)}: ${detail}`,
     extra: `<p class="muted">${tendency} Green notes were on time, gold early or late, red missed.</p>`,
+    rate: t.whole, // stars are for playing the whole piece
+    showAccuracy: true,
+    icon: '♪',
   });
+}
+
+// ---------------------------------------------------------------- looping
+
+/**
+ * Called after each pass of a loop. A clean pass (every note played, no wrong
+ * notes) raises the tempo by the chosen step; then the passage starts again.
+ */
+function nextPass({ clean, detail }) {
+  loop ??= { passes: 0, clean: 0, startBpm: bpm(), timer: 0 };
+  loop.passes++;
+  const step = +$('sheet-speedup').value;
+  let note = clean ? 'Clean pass!' : 'Not clean yet, so the same tempo again.';
+  if (clean) {
+    loop.clean++;
+    const max = +$('sheet-tempo').max;
+    if (step && bpm() < max) {
+      const next = Math.min(max, bpm() + step);
+      $('sheet-tempo').value = next;
+      $('sheet-bpm').textContent = next;
+      note += ` Next pass at ${next} bpm.`;
+    } else if (step) note += ` That’s the top speed (${max} bpm).`;
+  }
+  $('sheet-loop-log').textContent = `Pass ${loop.passes}: ${detail}. ${note}`;
+  $('sheet-loop-log').dataset.tone = clean ? 'good' : '';
+  $('sheet-start').textContent = '■ Stop';
+  loop.timer = setTimeout(startTempo, 700); // a short breath, then the count-in again
+}
+
+/** Stop looping and say how it went. */
+function endLoop() {
+  if (!loop) return;
+  clearTimeout(loop.timer);
+  const { passes, clean, startBpm } = loop;
+  loop = null;
+  $('sheet-loop-log').textContent = `Stopped after ${passes} ${passes === 1 ? 'pass' : 'passes'}, ${clean} clean`
+    + `${bpm() !== startBpm ? `, tempo ${startBpm} → ${bpm()} bpm` : ''}.`;
+  $('sheet-loop-log').dataset.tone = '';
 }

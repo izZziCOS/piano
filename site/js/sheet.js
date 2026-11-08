@@ -1,20 +1,29 @@
 // Turns a piece from pieces.js into a score (timed events + playable steps) and
 // draws it as sheet music with VexFlow (loaded globally from vendor/).
 import { parseMelody, noteName } from './notes.js';
-import { KEYS } from './generator.js';
 
 const DURATIONS = { 4: 'w', 3: 'hd', 2: 'h', 1.5: 'qd', 1: 'q', 0.75: '8d', 0.5: '8', 0.25: '16' };
 // How hard to play each dynamic marking (0–1 velocity).
 const DYNAMICS = { pp: 0.3, p: 0.42, mp: 0.55, mf: 0.68, f: 0.85, ff: 1 };
 const HANDS = { rh: { clef: 'treble', restKey: 'b/4' }, lh: { clef: 'bass', restKey: 'd/3' } };
+/** Every key VexFlow can draw, with its number of sharps (+) or flats (−). */
+export const KEY_SIGNATURES = {
+  Cb: -7, Gb: -6, Db: -5, Ab: -4, Eb: -3, Bb: -2, F: -1, C: 0, G: 1, D: 2, A: 3, E: 4, B: 5, 'F#': 6, 'C#': 7,
+  Abm: -7, Ebm: -6, Bbm: -5, Fm: -4, Cm: -3, Gm: -2, Dm: -1, Am: 0, Em: 1, Bm: 2, 'F#m': 3, 'C#m': 4, 'G#m': 5, 'D#m': 6, 'A#m': 7,
+};
+/** Note lengths (in beats) that can be drawn. */
+export const NOTE_LENGTHS = Object.keys(DURATIONS).map(Number);
 
 /**
  * Parse a piece into per-hand bars of events and a list of steps (moments
  * where notes start). Tied continuation notes are not steps: they extend the
  * note they're tied from. With `repeat: true` the steps run through twice.
  * Every event gets `play` = how long it actually sounds (including ties).
+ * `onIssue({ hand, bar, event })` is told about notes that cross a bar line
+ * (by default they are logged as a warning).
  */
-export function buildScore(piece) {
+export function buildScore(piece, { onIssue } = {}) {
+  const issue = onIssue ?? ((i) => console.warn(`${piece.id}: note at beat ${i.event.time} crosses a bar line (use a tie)`));
   const [num, den] = piece.time.split('/').map(Number);
   const barLen = (num * 4) / den;
   const pickup = piece.pickup ?? 0;
@@ -30,7 +39,7 @@ export function buildScore(piece) {
     const events = parseMelody(piece[hand]).map((ev) => {
       if (ev.dynamic) vel = DYNAMICS[ev.dynamic] ?? vel;
       const e = { ...ev, hand, time: t, bar: barOf(t), play: ev.beats, vel };
-      if (barOf(t + ev.beats - 0.01) !== e.bar) console.warn(`${piece.id}: note at beat ${t} crosses a bar line (use a tie)`);
+      if (barOf(t + ev.beats - 0.01) !== e.bar) issue({ hand, bar: e.bar, event: e });
       if (prev?.tie && !e.rest && prev.midis.join() === e.midis.join()) {
         e.tiedFrom = prev.tiedFrom ?? prev;
         e.tiedFrom.play += e.beats;
@@ -109,7 +118,7 @@ export function renderScore(container, score, { noteNames = false, showTime = tr
     const firstInLine = col === 0;
     const last = bar === barCount - 1;
     // The first bar of each line also holds the clef/key (and time) signature.
-    const lead = 60 + Math.abs(KEYS[piece.key] ?? 0) * 10 + (line === 0 && showTime ? 25 : 0) + (line === 0 && piece.repeat ? 10 : 0);
+    const lead = 60 + Math.abs(KEY_SIGNATURES[piece.key] ?? 0) * 10 + (line === 0 && showTime ? 25 : 0) + (line === 0 && piece.repeat ? 10 : 0);
     const unit = (width - 20 - lead) / perLine;
     const x = 10 + col * unit + (firstInLine ? 0 : lead);
     const w = unit + (firstInLine ? lead : 0);
