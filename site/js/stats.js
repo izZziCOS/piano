@@ -95,6 +95,7 @@ export function logPractice(n = 1) {
   const k = dayKey();
   log[k] = (log[k] ?? 0) + n;
   store.set('practiceLog', log);
+  activity();
   listeners.forEach((fn) => fn());
 }
 
@@ -186,6 +187,7 @@ function barsOf(piece) {
 export function recordBars(piece, results) {
   const all = store.get(BARS_KEY, {});
   const bars = { ...barsOf(piece) };
+  const fixed = [];
   for (const [bar, { notes, errors }] of results) {
     if (!notes) continue;
     const rate = Math.min(1, errors / notes);
@@ -194,9 +196,11 @@ export function recordBars(piece, results) {
       trouble: Math.round((old ? old.trouble * 0.5 + rate * 0.5 : rate) * 1000) / 1000,
       plays: (old?.plays ?? 0) + 1,
     };
+    if (old && old.trouble >= TROUBLE && bars[bar].trouble < TROUBLE) fixed.push(bar);
   }
   all[piece.id] = { sig: pieceSignature(piece), at: Date.now(), bars };
   store.set(BARS_KEY, all);
+  return fixed;
 }
 
 /** Trouble score of every bar played so far: { [bar]: { trouble, plays } }. */
@@ -224,4 +228,88 @@ export function troubleSpot(piece, barCount) {
   }
   if (from === 0 && to >= barCount - 1) return null; // that's the whole piece
   return { from, to, trouble: t(worst) };
+}
+
+// ------------------------------------------------------------ the week (Progress page)
+//
+// Practice time: any key played or answer given counts as practising, and the
+// time between two of them is added up, unless the gap was over a minute (a
+// break). Kept per day in seconds, and written every few seconds rather than
+// on every note.
+
+const IDLE = 60 * 1000;
+let lastActive = 0;
+let pendingMs = 0;
+let flushTimer = 0;
+
+/** Note that the player is practising right now. */
+export function activity(now = Date.now()) {
+  if (lastActive && now - lastActive < IDLE) pendingMs += now - lastActive;
+  lastActive = now;
+  if (!flushTimer && pendingMs) flushTimer = setTimeout(flushTime, 10000);
+}
+
+/** Save the practice time counted so far. */
+export function flushTime() {
+  clearTimeout(flushTimer);
+  flushTimer = 0;
+  const secs = Math.floor(pendingMs / 1000);
+  if (!secs) return;
+  pendingMs -= secs * 1000;
+  const log = store.get('practiceTime', {});
+  log[dayKey()] = (log[dayKey()] ?? 0) + secs;
+  store.set('practiceTime', log);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushTime(); });
+window.addEventListener('pagehide', flushTime);
+
+/**
+ * Things worth celebrating, for the weekly summary:
+ * { type: 'stars', id, title, mode, stars, from } when a piece earns more stars,
+ * { type: 'fixed', id, title, bars } when a trouble spot is played cleanly enough.
+ */
+export function addMilestone(entry) {
+  const list = store.get('milestones', []);
+  list.push({ at: Date.now(), ...entry });
+  store.set('milestones', list.slice(-100));
+}
+
+/**
+ * The last 7 days (today included) and the 7 before, for the summary on the
+ * Progress page: { minutes, notes, days, before: { minutes, notes }, milestones, speed }.
+ */
+export function week(now = new Date()) {
+  const time = store.get('practiceTime', {});
+  const log = store.get('practiceLog', {});
+  const span = (from, to) => {
+    let secs = 0;
+    let notes = 0;
+    let days = 0;
+    const d = new Date(now);
+    d.setDate(d.getDate() - from);
+    for (let i = from; i < to; i++) {
+      const k = dayKey(d);
+      secs += time[k] ?? 0;
+      notes += log[k] ?? 0;
+      if (log[k] || time[k]) days++;
+      d.setDate(d.getDate() - 1);
+    }
+    return { minutes: Math.round(secs / 60), notes, days };
+  };
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - 6);
+  const since = start.getTime();
+  const milestones = store.get('milestones', []).filter((m) => m.at >= since);
+  // Reading speed: the best test this week against the best one before it.
+  const tests = speedHistory().filter((h) => h.piece !== 'quiz');
+  const best = (list) => (list.length ? Math.max(...list.map((h) => h.npm)) : 0);
+  const thisWeek = best(tests.filter((h) => h.at >= since));
+  const earlier = best(tests.filter((h) => h.at < since));
+  return {
+    ...span(0, 7),
+    before: span(7, 14),
+    milestones,
+    speed: thisWeek ? { now: thisWeek, before: earlier } : null,
+  };
 }

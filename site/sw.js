@@ -4,7 +4,10 @@
 //   service worker installs, so every section works offline after one visit.
 // - They're fetched network-first: online you always get the latest version
 //   (and the stored copy is refreshed); offline, or when the network takes more
-//   than a few seconds, the stored copy is used.
+//   than a few seconds, the stored copy is used. Network fetches always
+//   revalidate with the server, skipping the browser's own HTTP cache, so a
+//   new page is never paired with an older script (GitHub Pages lets browsers
+//   keep files for 10 minutes otherwise).
 // - Piano samples and VexFlow never change (a new VexFlow has a new file
 //   name), so they're served from storage first. The page asks for the
 //   samples to be stored once the piano has loaded (see main.js).
@@ -34,6 +37,7 @@ const SHELL = [
   'js/generator.js',
   'js/keyboard.js',
   'js/learn.js',
+  'js/learncheck.js',
   'js/main.js',
   'js/musicxml.js',
   'js/notes.js',
@@ -94,7 +98,7 @@ async function networkFirst(event) {
   // Every page address (#learn, #sheet/…) is the same index.html.
   const key = request.mode === 'navigate' ? INDEX : request;
   const stored = () => caches.match(key, { ignoreSearch: request.mode === 'navigate' });
-  const network = fetch(request).then((response) => {
+  const network = fetch(request, { cache: 'no-cache' }).then((response) => {
     if (response.status === 200 && response.type === 'basic') {
       const copy = response.clone();
       event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.put(key, copy)));

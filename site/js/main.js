@@ -10,6 +10,7 @@ import * as sheet from './sheetpractice.js';
 import * as ear from './ear.js';
 import * as progress from './progress.js';
 import * as sync from './sync.js';
+import * as stats from './stats.js';
 import { loadNotation } from './sheet.js';
 
 const $ = (id) => document.getElementById(id);
@@ -26,6 +27,7 @@ requestAnimationFrame(() => keyboard.reveal(60, { center: true, smooth: false })
 for (const m of Object.values(modes)) m.init?.(keyboard);
 sync.init();
 keyboard.on('noteon', (midi) => modes[current]?.onNote?.(midi));
+keyboard.on('noteon', () => stats.activity()); // practice time for the weekly summary
 
 // --- Routing: #learn, #sheet, #sheet/<piece-id>?mode=name, #quiz, #scales, #play ---
 // Pages that draw sheet music wait for VexFlow, which is only loaded when first needed.

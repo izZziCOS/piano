@@ -55,10 +55,59 @@ function updateChip() {
 }
 
 function render() {
+  renderWeek();
   renderGoal();
   renderCalendar();
   renderHeatmap();
   renderSpeed();
+}
+
+const MODE_NAME = { play: 'note by note', tempo: 'at tempo', rhythm: 'rhythm', name: 'naming' };
+const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** The last 7 days in a sentence, then what got better. */
+function renderWeek() {
+  stats.flushTime();
+  const w = stats.week();
+  const parts = [];
+  if (w.minutes) parts.push(`<strong>${w.minutes}</strong> ${w.minutes === 1 ? 'minute' : 'minutes'}`);
+  if (w.notes) parts.push(`<strong>${w.notes}</strong> ${w.notes === 1 ? 'note' : 'notes'}`);
+  // Pieces that earned more stars (one line per piece and mode: the best result).
+  const improved = new Map();
+  for (const m of w.milestones.filter((x) => x.type === 'stars')) {
+    const k = `${m.id}|${m.mode}`;
+    const prev = improved.get(k);
+    improved.set(k, { ...m, from: prev ? prev.from : m.from, stars: Math.max(m.stars, prev?.stars ?? 0) });
+  }
+  const pieces = new Set([...improved.values()].map((m) => m.id));
+  if (pieces.size) parts.push(`${pieces.size} ${pieces.size === 1 ? 'piece' : 'pieces'} improved`);
+  const fixed = w.milestones.filter((x) => x.type === 'fixed');
+  if (fixed.length) parts.push(`${plural(fixed.length, 'trouble spot')} fixed`);
+
+  if (!parts.length) {
+    $('week-line').textContent = 'Nothing yet this week. Five minutes today is a great start.';
+    $('week-list').innerHTML = '';
+    return;
+  }
+  let compare = '';
+  if (w.before.minutes && w.minutes) {
+    const diff = w.minutes - w.before.minutes;
+    compare = diff > 0 ? ` That’s ${diff} more ${diff === 1 ? 'minute' : 'minutes'} than the week before.` : '';
+  }
+  $('week-line').innerHTML = `Last 7 days: ${parts.join(' · ')}, on ${plural(w.days, 'day')}.${compare}`;
+  const stars = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
+  const items = [
+    ...[...improved.values()].map((m) => `<li><span class="stars" aria-label="${m.stars} of 3 stars">${stars(m.stars)}</span>
+      <a href="#sheet/${encodeURIComponent(m.id)}?mode=${m.mode}">${escapeHtml(m.title)}</a> (${MODE_NAME[m.mode] ?? m.mode})${m.from ? `, up from ${plural(m.from, 'star')}` : ''}</li>`),
+    ...fixed.map((m) => `<li>Trouble in ${escapeHtml(m.bars)} of <a href="#sheet/${encodeURIComponent(m.id)}?mode=tempo">${escapeHtml(m.title)}</a> fixed</li>`),
+  ];
+  if (w.speed && w.speed.now > w.speed.before) {
+    items.push(w.speed.before
+      ? `<li>Reading speed: ${w.speed.now} correct notes a minute, up from your best of ${w.speed.before}</li>`
+      : `<li>Reading speed: ${w.speed.now} correct notes a minute in your first speed test</li>`);
+  }
+  $('week-list').innerHTML = items.join('');
 }
 
 function renderGoal() {

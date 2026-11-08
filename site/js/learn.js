@@ -1,6 +1,9 @@
 // "Learn to read" path: short chapters that explain how to read sheet music,
-// each with rendered examples you can hear and a link to practise that skill.
+// each with rendered examples you can hear, a link to practise that skill, and
+// a few questions to check yourself (learncheck.js). Passing the check marks
+// the chapter done.
 import { buildScore, renderScore } from './sheet.js';
+import { CHECKS } from './learncheck.js';
 import * as audio from './audio.js';
 import * as store from './storage.js';
 
@@ -205,21 +208,24 @@ const CHAPTERS = [
 
 let current = 0;
 let stopPlay = null;
+let kb;
+let check = null; // { questions, tries: [wrong answers per question], solved: [bool] }
 
-export function init() {
+export function init(keyboard) {
+  kb = keyboard;
   $('learn-toc').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-i]');
     if (btn) show(+btn.dataset.i);
   });
   $('learn-prev').addEventListener('click', () => show(current - 1));
-  $('learn-next').addEventListener('click', () => {
-    markDone(CHAPTERS[current].id);
-    if (current < CHAPTERS.length - 1) show(current + 1);
-    else renderToc();
-  });
+  $('learn-next').addEventListener('click', () => show(current + 1));
   $('learn-body').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-ex]');
     if (btn) playExample(+btn.dataset.ex, btn);
+    const choice = e.target.closest('button[data-choice]');
+    if (choice) answer(+choice.dataset.q, choice);
+    if (e.target.closest('[data-action="new-check"]')) startCheck(true);
+    if (e.target.closest('[data-action="next-chapter"]')) show(current + 1);
   });
   current = Math.min(store.get('learnChapter', 0), CHAPTERS.length - 1);
 }
@@ -267,18 +273,91 @@ function show(i) {
         <figcaption><span>${x.caption}</span>
           <button class="btn btn-small btn-ghost" data-ex="${j}">▶ Listen</button></figcaption>
       </figure>`).join('')}
-    ${c.practice ? `<p class="practice-link"><a class="btn" href="${c.practice.href}">Try it: ${c.practice.label} →</a></p>` : ''}`;
+    ${c.practice ? `<p class="practice-link"><a class="btn" href="${c.practice.href}">Try it: ${c.practice.label} →</a></p>` : ''}
+    <section class="check" aria-labelledby="check-title">
+      <h3 id="check-title">Check yourself</h3>
+      <div id="check-body"></div>
+    </section>`;
   c.examples.forEach((x, j) => {
     x.score = buildScore(x.piece);
     renderScore($(`learn-ex-${j}`), x.score, { noteNames: !!x.names });
   });
+  startCheck();
   $('learn-prev').disabled = current === 0;
-  $('learn-next').textContent = current === CHAPTERS.length - 1 ? 'Finish ✓' : 'Got it, next →';
+  $('learn-next').hidden = current === CHAPTERS.length - 1;
   renderToc();
   // Back to the top of the new chapter, but only if it's scrolled out of sight
   // (otherwise opening the page would scroll the top bar and welcome banner away).
   if ($('view-learn').getBoundingClientRect().top < 0) $('view-learn').scrollIntoView({ block: 'start' });
 }
+
+// ------------------------------------------------------------ check yourself
+
+const isDone = () => doneSet().has(CHAPTERS[current].id);
+
+/** A fresh set of questions for this chapter. */
+function startCheck(focus = false) {
+  const questions = CHECKS[CHAPTERS[current].id]();
+  check = { questions, tries: questions.map(() => 0), solved: questions.map(() => false) };
+  $('check-body').innerHTML = `
+    <p class="muted small">${isDone() ? 'You’ve passed this chapter. Try again any time for a refresher.'
+      : 'Answer these to finish the chapter. One slip is fine.'}</p>
+    <ol class="check-list">
+      ${questions.map((q, i) => `
+        <li class="check-q">
+          <p class="check-text" id="check-text-${i}">${q.text}</p>
+          ${q.piece ? `<div class="sheet-paper example-sheet check-sheet" id="check-sheet-${i}"></div>` : ''}
+          <div class="ear-answers check-choices" role="group" aria-labelledby="check-text-${i}">
+            ${q.choices.map((ch) => `<button class="btn btn-ghost" data-q="${i}" data-choice="${ch}">${ch}</button>`).join('')}
+          </div>
+          <p class="status check-why" id="check-why-${i}" aria-live="polite"></p>
+        </li>`).join('')}
+    </ol>
+    <div id="check-result" class="check-result" aria-live="polite"></div>`;
+  questions.forEach((q, i) => {
+    if (q.piece) renderScore($(`check-sheet-${i}`), buildScore(q.piece), { showTime: !!q.showTime });
+  });
+  if (focus) $('check-body').querySelector('button[data-choice]')?.focus();
+}
+
+function answer(i, btn) {
+  const q = check.questions[i];
+  if (check.solved[i] || btn.disabled) return;
+  const why = $(`check-why-${i}`);
+  if (btn.dataset.choice === q.answer) {
+    check.solved[i] = true;
+    btn.classList.add('is-right');
+    btn.closest('.check-choices').querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    why.dataset.tone = 'good';
+    why.textContent = `${check.tries[i] ? 'Yes, now you’ve got it.' : 'Right!'} ${q.why}`.trim();
+    if (check.solved.every(Boolean)) finishCheck();
+  } else {
+    check.tries[i]++;
+    btn.classList.add('is-wrong');
+    btn.disabled = true;
+    why.dataset.tone = 'bad';
+    why.textContent = `Not ${btn.dataset.choice}. Try again.`;
+  }
+}
+
+function finishCheck() {
+  const total = check.questions.length;
+  const first = check.tries.filter((n) => n === 0).length;
+  const passed = first >= total - 1;
+  const last = current === CHAPTERS.length - 1;
+  if (passed) {
+    markDone(CHAPTERS[current].id);
+    renderToc();
+  }
+  $('check-result').dataset.tone = passed ? 'good' : 'bad';
+  $('check-result').innerHTML = passed
+    ? `<p><strong>Chapter done ✓</strong> ${first} of ${total} right first time.${last && doneSet().size === CHAPTERS.length ? ' That’s every chapter. Well done!' : ''}</p>
+       ${last ? '' : '<button class="btn" data-action="next-chapter">Next chapter →</button>'}`
+    : `<p>${first} of ${total} right first time. Read the chapter again, then try a new set of questions.</p>
+       <button class="btn" data-action="new-check">New questions</button>`;
+}
+
+// ------------------------------------------------------------ examples
 
 function playExample(j, btn) {
   const wasPlaying = stopPlay?.btn === btn;
@@ -287,7 +366,7 @@ function playExample(j, btn) {
   const { score } = CHAPTERS[current].examples[j];
   const steps = score.steps.map((s) => ({
     beats: s.beats,
-    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.play, velocity: e.vel }))),
+    notes: s.events.flatMap((e) => e.midis.map((midi, k) => ({ midi, beats: e.play, velocity: e.vel, name: e.names[k] }))),
   }));
   // Rests at the very start: delay the first note.
   if (score.steps[0]?.time > 0) steps.unshift({ beats: score.steps[0].time, notes: [] });
@@ -296,6 +375,7 @@ function playExample(j, btn) {
   stopPlay = audio.playSequence(steps, {
     bpm: score.piece.bpm,
     onStep: (i) => {
+      kb.showPlayed(steps[i].notes, 60 / score.piece.bpm);
       score.steps.forEach((s, k) => s.events.forEach((e) => e.el?.classList.toggle('current', k === i - offset)));
     },
     onDone: stop,
@@ -308,5 +388,6 @@ function stop() {
   stopPlay();
   stopPlay.btn.textContent = '▶ Listen';
   stopPlay = null;
+  kb.clear('demo');
   document.querySelectorAll('#learn-body .current').forEach((el) => el.classList.remove('current'));
 }

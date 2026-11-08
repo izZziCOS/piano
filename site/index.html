@@ -61,7 +61,7 @@
           <div id="learn-body" class="prose"></div>
           <div class="btn-row learn-nav">
             <button id="learn-prev" class="btn btn-ghost">← Back</button>
-            <button id="learn-next" class="btn">Got it, next →</button>
+            <button id="learn-next" class="btn btn-ghost">Next chapter →</button>
           </div>
         </article>
       </div>
@@ -178,7 +178,12 @@
               <button id="sheet-listen" class="btn btn-ghost">Listen</button>
               <button id="sheet-restart" class="btn btn-ghost">Restart</button>
               <button id="sheet-new" class="btn btn-ghost" hidden>New notes</button>
+              <button id="sheet-share" class="btn btn-ghost" hidden>Copy link</button>
             </div>
+            <p id="sheet-share-box" class="share-box" hidden>
+              <label for="sheet-share-url">Copy this link to share these exact notes:</label>
+              <input id="sheet-share-url" readonly>
+            </p>
           </div>
           <div class="name-only answer-row">
             <label for="sheet-answer">Note name</label>
@@ -242,6 +247,11 @@
 
     <!-- Progress -->
     <section id="view-progress" class="view" hidden>
+      <div class="card week-card" aria-labelledby="week-title">
+        <h2 id="week-title">This week</h2>
+        <p id="week-line" class="week-line"></p>
+        <ul id="week-list" class="week-list"></ul>
+      </div>
       <div class="progress-grid">
         <div class="card goal-card">
           <h2>Today</h2>

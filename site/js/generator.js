@@ -176,3 +176,39 @@ export function weakSheet() {
   // Two hands would play the same beats together; that's fine for reading.
   return piece;
 }
+
+// ------------------------------------------------------------ sharing
+//
+// A random sheet can be shared as a link. The notes themselves go in the link
+// (compressed), not a random seed: which notes come up depends on each
+// person's own statistics, so the same seed would give someone else a
+// different sheet.
+
+const MAX_LINE = 4000;
+const LINE_CHARS = /^[A-Ga-g0-9R#+:.~|!@\s-]*$/;
+
+async function pipe(bytes, stream) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+}
+const toBase64Url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromBase64Url = (text) => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+
+/** A sheet's notes as a short, URL-safe code. */
+export async function encodeSheet({ key, time, rh, lh }) {
+  const json = JSON.stringify({ key, time, rh, lh });
+  return toBase64Url(await pipe(new TextEncoder().encode(json), new CompressionStream('deflate-raw')));
+}
+
+/** The sheet in a code from encodeSheet(), or null if it isn't a valid one. */
+export async function decodeSheet(code) {
+  try {
+    if (!/^[\w-]{1,6000}$/.test(code)) return null;
+    const json = new TextDecoder().decode(await pipe(fromBase64Url(code), new DecompressionStream('deflate-raw')));
+    const { key, time, rh, lh } = JSON.parse(json);
+    const line = (v) => v === undefined || (typeof v === 'string' && v.length <= MAX_LINE && LINE_CHARS.test(v));
+    if (!(key in KEYS) || !['4/4', '3/4'].includes(time) || !line(rh) || !line(lh) || !(rh || lh)) return null;
+    return { key, time, ...(rh ? { rh } : {}), ...(lh ? { lh } : {}) };
+  } catch {
+    return null;
+  }
+}

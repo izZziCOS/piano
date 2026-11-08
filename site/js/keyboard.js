@@ -16,6 +16,10 @@ const KEY_LABELS = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 
 const spoken = (name) => name.replace('♯', ' sharp ').replace('♭', ' flat ');
 const keyName = (m) => (isBlack(m) ? `${spoken(noteName(m))} / ${spoken(noteName(m, { flats: true }))}` : noteName(m));
 
+/** "F#5" → "F♯", "Bb4" → "B♭": the letter and accidental, no octave. */
+const playedName = (n) => (n.name ? n.name.replace(/-?\d+$/, '').replace('#', '♯').replace(/(?<=[A-G])b/, '♭')
+  : noteName(n.midi, { octave: false }));
+
 export class Keyboard {
   constructor(el) {
     this.el = el;
@@ -59,7 +63,8 @@ export class Keyboard {
       key.setAttribute('role', 'button');
       key.setAttribute('aria-label', keyName(m));
       key.tabIndex = m === this.focusMidi ? 0 : -1;
-      key.innerHTML = `<span class="label-key"></span><span class="label-note">${noteName(m, { octave: m % 12 === 0 })}</span>`;
+      key.innerHTML = `<span class="label-key"></span><span class="label-note">${noteName(m, { octave: m % 12 === 0 })}</span>`
+        + '<span class="label-played" aria-hidden="true"></span>';
       if (isBlack(m)) {
         key.className = 'key black';
         key.style.left = `calc(${(whiteIndex / n) * 100}% - var(--black-w) / 2)`;
@@ -211,6 +216,23 @@ export class Keyboard {
       left: (left + right) / 2 - scroller.clientWidth / 2,
       behavior: smooth ? 'smooth' : 'auto',
     });
+  }
+
+  /**
+   * Light up the keys of notes being played back (Listen buttons): each key
+   * stays lit for as long as its note sounds, showing the note's name. `notes`
+   * are [{ midi, beats, name }], where `name` is how the music spells it
+   * ("Bb4", "F♯"; the key's own name if left out). `spb` is seconds per beat.
+   */
+  showPlayed(notes, spb) {
+    if (!notes.length) return;
+    for (const n of notes) {
+      const label = this.keys.get(n.midi)?.querySelector('.label-played');
+      if (label) label.textContent = playedName(n);
+    }
+    // A little shorter than the note, so a repeated key visibly lets go in between.
+    for (const n of notes) this.flash(n.midi, 'demo', Math.max(n.beats * spb * 1000 * 0.95 - 40, 120));
+    this.reveal(notes.map((n) => n.midi));
   }
 
   /** Brief highlight (e.g. 'correct', 'wrong', 'demo'). */

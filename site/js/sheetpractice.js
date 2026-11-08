@@ -10,7 +10,7 @@
 //           Optionally timed. Every answer feeds the spaced-repetition stats.
 import { PIECES } from './pieces.js';
 import { buildScore, renderScore } from './sheet.js';
-import { randomSheet, weakSheet, DEFAULTS, isMinor } from './generator.js';
+import { randomSheet, weakSheet, DEFAULTS, isMinor, encodeSheet, decodeSheet } from './generator.js';
 import { noteName } from './notes.js';
 import * as audio from './audio.js';
 import * as store from './storage.js';
@@ -120,6 +120,7 @@ export function init(keyboard) {
   $('sheet-listen').addEventListener('click', toggleListen);
   $('sheet-restart').addEventListener('click', restart);
   $('sheet-new').addEventListener('click', () => load(piece.id));
+  $('sheet-share').addEventListener('click', shareSheet);
   $('sheet-result').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
@@ -190,7 +191,9 @@ export function enter(param) {
       mode = m;
       document.querySelector(`input[name="sheet-mode"][value="${mode}"]`).checked = true;
     }
-    load(param);
+    const notes = query.get('notes');
+    if (param === 'random' && notes) openShared(notes);
+    else load(param);
   } else if (!piece) load(store.get('sheetPiece', 'rh-c-position'));
   else { draw(); showCurrent(); }
 }
@@ -231,7 +234,49 @@ function renderList() {
 
 const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-function load(id, { keepSession = false } = {}) {
+/** Open a random sheet shared as a link (see shareSheet). */
+async function openShared(code) {
+  const ticket = ++sharedTicket;
+  const shared = await decodeSheet(code);
+  if (ticket !== sharedTicket) return; // another sheet was chosen meanwhile
+  let ok = Boolean(shared);
+  if (ok) {
+    try { buildScore(shared, { onIssue: () => { throw new Error('bar'); } }); } catch { ok = false; }
+  }
+  load('random', { shared: ok ? shared : null });
+  if (!ok) setStatus('That link’s notes couldn’t be read, so here’s a new random sheet.', 'bad');
+}
+let sharedTicket = 0;
+
+/** Copy a link to this exact random sheet, with its settings and the current mode. */
+async function shareSheet() {
+  const btn = $('sheet-share');
+  const params = new URLSearchParams();
+  params.set('mode', mode);
+  const settings = builderSettings();
+  for (const f of BUILDER_FIELDS) {
+    const v = settings[f];
+    params.set(f === 'mode' ? 'keymode' : f, typeof v === 'boolean' ? (v ? '1' : '0') : v);
+  }
+  params.set('notes', await encodeSheet(source));
+  const url = `${location.origin}${location.pathname}#sheet/random?${params}`;
+  $('sheet-share-url').value = url;
+  try {
+    await navigator.clipboard.writeText(url);
+    $('sheet-share-box').hidden = true;
+    btn.textContent = 'Link copied ✓';
+    clearTimeout(btn.timer);
+    btn.timer = setTimeout(() => { btn.textContent = 'Copy link'; }, 2500);
+  } catch {
+    // No clipboard access (an older browser, or permission refused): show the link to copy by hand.
+    $('sheet-share-box').hidden = false;
+    $('sheet-share-url').focus();
+    $('sheet-share-url').select();
+  }
+}
+
+function load(id, { keepSession = false, shared = null } = {}) {
+  sharedTicket++;
   piece = findPiece(id) ?? PIECES[0];
   store.set('sheetPiece', piece.id);
   stop();
@@ -242,8 +287,14 @@ function load(id, { keepSession = false } = {}) {
   $('sheet-own').hidden = !piece.own;
   $('sheet-builder').hidden = piece.generated !== 'random';
   $('sheet-new').hidden = !piece.generated;
+  $('sheet-share').hidden = piece.generated !== 'random';
+  $('sheet-share-box').hidden = true;
   $('sheet-title').textContent = piece.title;
-  $('sheet-desc').textContent = piece.desc ?? '';
+  $('sheet-desc').textContent = shared
+    ? 'A shared sheet: the same notes as whoever sent you the link. New notes makes a fresh one.'
+    : piece.desc ?? '';
+  // A fresh sheet no longer matches a shared link in the address, so a reload doesn't bring it back.
+  if (!shared && /[?&]notes=/.test(location.hash)) history.replaceState(null, '', `#sheet/${piece.id}`);
   $('sheet-result').hidden = true;
   renderList();
 
@@ -263,7 +314,7 @@ function load(id, { keepSession = false } = {}) {
     }
     source = { ...piece, ...weak };
   } else if (piece.generated === 'random') {
-    source = { ...piece, ...randomSheet(builderSettings()) };
+    source = { ...piece, ...(shared ?? randomSheet(builderSettings())) };
   } else {
     source = piece;
   }
@@ -673,7 +724,10 @@ function showResult({ accuracy, detail, extra = '', rate = true, showAccuracy = 
     const key = STARS_KEY[mode] ?? 'pieces';
     const progress = store.get(key, {});
     isBest = earned > (progress[piece.id] ?? 0);
-    if (isBest) store.set(key, { ...progress, [piece.id]: earned });
+    if (isBest) {
+      store.set(key, { ...progress, [piece.id]: earned });
+      stats.addMilestone({ type: 'stars', id: piece.id, title: piece.title, mode, stars: earned, from: progress[piece.id] ?? 0 });
+    }
   }
   renderList();
   setStatus('');
@@ -701,15 +755,14 @@ function toggleListen() {
   $('sheet-listen').textContent = 'Stop';
   const steps = score.steps.map((s) => ({
     beats: s.beats,
-    notes: s.events.flatMap((e) => e.midis.map((midi) => ({ midi, beats: e.play, velocity: e.vel }))),
+    notes: s.events.flatMap((e) => e.midis.map((midi, k) => ({ midi, beats: e.play, velocity: e.vel, name: e.names[k] }))),
   }));
   stopTempo();
   stopListen = audio.playSequence(steps, {
     bpm: bpm(),
-    onStep: (i, dur) => {
+    onStep: (i) => {
       paint(i);
-      for (const n of steps[i].notes) kb.flash(n.midi, 'demo', Math.max(dur, 0.15) * 900);
-      kb.reveal(steps[i].notes.map((n) => n.midi));
+      kb.showPlayed(steps[i].notes, 60 / bpm());
       scrollSheetTo(score.steps[i].events.find((e) => e.el)?.el);
     },
     onDone: stop,
@@ -799,7 +852,9 @@ function recordBars(t) {
   };
   for (const x of t.expected) add(x.events[0].bar, 1, x.result === 'missed' ? 1 : x.result === 'ontime' ? 0 : 0.5);
   for (const bar of t.wrongBars) add(bar, 0, 1);
-  stats.recordBars(piece, perBar);
+  for (const bar of stats.recordBars(piece, perBar)) {
+    stats.addMilestone({ type: 'fixed', id: piece.id, title: piece.title, bars: barsText(bar, bar) });
+  }
 }
 
 function startTempo() {

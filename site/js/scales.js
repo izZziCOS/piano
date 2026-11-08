@@ -84,15 +84,16 @@ function show() {
 
 function play() {
   if (stopPlay) return stop();
-  const { isChord, midis } = current();
+  const { isChord, midis, names } = current();
+  const nameOf = new Map(midis.map((m, i) => [m, names[i]]));
   const steps = isChord
     ? [...midis.map((midi) => ({ midi, beats: 0.6 })), { midis, beats: 2.5 }]
     : [...midis, ...midis.slice(0, -1).reverse()].map((midi) => ({ midi, beats: 0.5 }));
   $('scale-play').textContent = 'Stop';
   stopPlay = audio.playSequence(steps, {
     bpm: 100,
-    onStep: (i, dur) => {
-      for (const m of steps[i].midis ?? [steps[i].midi]) kb.flash(m, 'demo', dur * 900);
+    onStep: (i) => {
+      kb.showPlayed((steps[i].midis ?? [steps[i].midi]).map((midi) => ({ midi, beats: steps[i].beats, name: nameOf.get(midi) })), 60 / 100);
     },
     onDone: stop,
   });

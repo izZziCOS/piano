@@ -35,6 +35,8 @@ function findChrome() {
 let server;
 let offline = false; // when true, the server drops every connection, as if the network were gone
 let swBuild = null; // when set, sw.js is served as if deployed with this commit id
+let keepFiles = false; // when true, files are sent as cacheable for an hour (like most static hosts)
+const requested = []; // paths asked for while keepFiles is on
 let browser;
 let base;
 const problems = []; // console errors/warnings, page errors, failed requests — across all tests
@@ -49,7 +51,9 @@ before(async () => {
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404).end('not found'); return; }
       if (swBuild && url === '/sw.js') data = data.toString().replace("const BUILD = 'dev';", `const BUILD = '${swBuild}';`);
-      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream' }).end(data);
+      const headers = { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream' };
+      if (keepFiles) { headers['Cache-Control'] = 'max-age=3600'; requested.push(url); }
+      res.writeHead(200, headers).end(data);
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -68,10 +72,10 @@ after(async () => {
 
 // Each page gets a fresh profile, so saved progress/stats don't leak between tests.
 // `init` runs in the page before any of the site's scripts.
-async function open(hash, { width = 1366, height = 900, mobile = false, init } = {}) {
+async function open(hash, { width = 1366, height = 900, mobile = false, init, initArg } = {}) {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
-  if (init) await page.evaluateOnNewDocument(init);
+  if (init) await page.evaluateOnNewDocument(init, initArg);
   page.on('pageerror', (e) => problems.push(`[${hash}] page error: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warn' || m.type() === 'warning') problems.push(`[${hash}] console.${m.type()}: ${m.text()}`);
@@ -431,7 +435,9 @@ test('progress page: goal, calendar, heatmap and speed chart', async () => {
     ];
     localStorage.setItem('piano-practice:v1', JSON.stringify(all));
   });
+  // The page keeps what it read from storage in memory, so load it again to see the seeded tests.
   await page.goto(base + '#progress');
+  await page.reload({ waitUntil: 'networkidle0' });
   await wait(300);
   assert.equal(await text(page, '#goal-today'), '5');
   assert.equal(await page.$$eval('#calendar .day:not(.pad)', (d) => d.length), 35);
@@ -1101,6 +1107,292 @@ test('an open page offers a reload when a new version is deployed', async () => 
   } finally {
     swBuild = null;
   }
+  await page.close();
+});
+
+test('Listen lights up the keys being played, for as long as each note sounds', async () => {
+  /** Records which keys light up during playback, and for how long. */
+  const watchKeys = (page) => page.evaluate(() => {
+    window.lit = [];
+    const since = new Map();
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        const on = m.target.classList.contains('demo');
+        const was = (m.oldValue ?? '').includes('demo');
+        if (on && !was) since.set(m.target, { t: performance.now(), name: m.target.querySelector('.label-played').textContent });
+        if (!on && was) {
+          const { t, name } = since.get(m.target);
+          window.lit.push({ midi: +m.target.dataset.midi, ms: performance.now() - t, name });
+        }
+      }
+    }).observe(document.getElementById('keyboard'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  });
+
+  const page = await open('#sheet/rh-c-position?mode=play');
+  await watchKeys(page);
+  await page.$eval('#sheet-tempo', (e) => { e.value = 200; e.dispatchEvent(new Event('input')); });
+  await page.click('#sheet-listen');
+  await page.waitForFunction(() => document.getElementById('sheet-listen').textContent === 'Listen', { timeout: 20000 });
+  const lit = await page.evaluate(() => window.lit);
+  const expected = await page.evaluate(async () => {
+    const { PIECES } = await import('./js/pieces.js');
+    return PIECES.find((p) => p.id === 'rh-c-position').rh;
+  });
+  assert.ok(lit.length >= 12, `every note lights its key (${lit.length})`);
+  for (const { midi } of lit) assert.ok(midi >= 60 && midi <= 67, `only the piece’s keys (${midi}) in ${expected}`);
+  assert.equal(await page.$$eval('.key.demo', (k) => k.length), 0, 'all let go at the end');
+  const names = { 60: 'C', 62: 'D', 64: 'E', 65: 'F', 67: 'G' };
+  for (const { midi, name } of lit) assert.equal(name, names[midi], 'each lit key shows its note name');
+  // 300 ms a beat at 200 bpm: quarter notes light briefly, the final whole note for about a second.
+  const ms = lit.map((l) => l.ms).sort((a, b) => a - b);
+  assert.ok(ms[0] > 150 && ms[0] < 400, `quarter notes (${Math.round(ms[0])} ms)`);
+  assert.ok(ms.at(-1) > 900, `the whole note stays lit (${Math.round(ms.at(-1))} ms)`);
+  await page.close();
+
+  // The examples in Learn light up the keys too.
+  const learn = await open('#learn');
+  await watchKeys(learn);
+  await learn.click('#learn-body button[data-ex]');
+  await learn.waitForFunction(() => document.querySelector('.key.demo'), { timeout: 5000 });
+  await learn.click('#learn-body button[data-ex]'); // stop
+  assert.equal(await learn.$$eval('.key.demo', (k) => k.length), 0, 'stopping clears them');
+  await learn.close();
+
+  // Names are spelled as the music spells them: F major's fourth note is B♭, not A♯.
+  const scales = await open('#scales');
+  await scales.select('#scale-root', '5');
+  await scales.select('#scale-type', 'major');
+  await scales.click('#scale-play');
+  await scales.waitForFunction(() => document.querySelector('.key.demo[data-midi="70"]'), { timeout: 5000 });
+  assert.equal(await scales.$eval('.key[data-midi="70"] .label-played', (e) => e.textContent), 'B♭');
+  assert.equal(await scales.$eval('.key[data-midi="70"] .label-played', (e) => getComputedStyle(e).display), 'block', 'shown while lit');
+  await scales.click('#scale-play'); // stop
+  await scales.close();
+});
+
+test('a new page never runs old scripts: they are always revalidated', async () => {
+  const nginx = fs.readFileSync(path.join(ROOT, '..', 'nginx.conf'), 'utf8');
+  const map = nginx.match(/map \$uri \$cache_control \{([\s\S]*?)\n\}/)[1];
+  for (const line of map.split('\n').filter((l) => /max-age/.test(l))) {
+    assert.doesNotMatch(line, /\bjs\b|\bcss\b/, `scripts and styles aren’t kept: ${line.trim()}`);
+  }
+  assert.match(map, /default\s+"no-cache"/);
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  assert.match(sw, /fetch\(request, \{ cache: 'no-cache' \}\)/, 'the service worker skips the HTTP cache for the page and scripts');
+
+  // In the browser, with a host that lets browsers keep files for an hour:
+  // after the first visit, scripts still come from the server, not the browser's cache.
+  keepFiles = true;
+  try {
+    const page = await open('#play');
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, { timeout: 10000 });
+    requested.length = 0;
+    await page.reload({ waitUntil: 'networkidle0' });
+    assert.ok(requested.includes('/js/notes.js'), `scripts were checked with the server (${requested.join(' ')})`);
+    assert.ok(requested.includes('/css/style.css'), 'and the styles');
+    await page.close();
+  } finally {
+    keepFiles = false;
+  }
+});
+
+test('storage is read once and kept in memory, and sees other tabs', async () => {
+  const page = await open('#play');
+  const result = await page.evaluate(async () => {
+    const store = await import('./js/storage.js');
+    store.set('memo', { list: [1] });
+    const got = store.get('memo');
+    got.list.push(2); // changing a copy...
+    const unchanged = store.get('memo').list.length; // ...doesn't change what's stored
+    const reads = { n: 0 };
+    const real = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (...a) { reads.n++; return real.apply(this, a); };
+    for (let i = 0; i < 50; i++) store.get('memo');
+    Storage.prototype.getItem = real;
+    return { unchanged, reads: reads.n, saved: JSON.parse(localStorage.getItem('piano-practice:v1')).memo };
+  });
+  assert.equal(result.unchanged, 1);
+  assert.equal(result.reads, 0, 'no localStorage reads once loaded');
+  assert.deepEqual(result.saved, { list: [1] }, 'still written to localStorage');
+
+  // A second tab changes it: the first sees the change.
+  const other = await page.browserContext().newPage();
+  await other.goto(base + '#play', { waitUntil: 'networkidle0' });
+  await other.evaluate(async () => (await import('./js/storage.js')).set('memo', { list: [9] }));
+  await until(() => page.evaluate(async () => (await import('./js/storage.js')).get('memo').list[0] === 9), 3000, 'other tab’s change seen');
+  await other.close();
+  await page.close();
+});
+
+test('random sheets can be shared as a link with the exact notes', async () => {
+  const page = await open('#sheet/random?mode=name&clef=grand&range=ledger&rhythm=varied');
+  await page.waitForFunction(() => document.querySelectorAll('#sheet .vf-stavenote').length > 0);
+  assert.equal(await page.$eval('#sheet-share', (e) => e.hidden), false, 'offered for random sheets');
+  await page.evaluate(() => {
+    window.copied = null;
+    navigator.clipboard.writeText = async (t) => { window.copied = t; };
+  });
+  await page.click('#sheet-share');
+  await page.waitForFunction(() => window.copied);
+  const url = await page.evaluate(() => window.copied);
+  assert.match(await text(page, '#sheet-share'), /Link copied/);
+  const params = new URLSearchParams(url.split('?')[1]);
+  assert.equal(params.get('mode'), 'name');
+  assert.equal(params.get('clef'), 'grand');
+  assert.equal(params.get('range'), 'ledger');
+  assert.ok(url.length < 2000, `a reasonable length (${url.length})`);
+  // The same notes, drawn the same way (ignoring VexFlow's generated ids).
+  const drawing = (p) => p.$eval('#sheet', (e) => e.innerHTML.replace(/ id="[^"]*"/g, ''));
+  const meta = await text(page, '#sheet-meta');
+  const mine = await drawing(page);
+
+  const friend = await open(url.slice(url.indexOf('#')), {
+    init: () => localStorage.setItem('piano-practice:v1', JSON.stringify({ builder: { clef: 'treble', range: 'staff' } })),
+  });
+  await friend.waitForFunction(() => document.querySelectorAll('#sheet .vf-stavenote').length > 0);
+  assert.equal(await text(friend, '#sheet-meta'), meta);
+  assert.equal(await drawing(friend), mine, 'exactly the same sheet');
+  assert.equal(await friend.$eval('input[name="sheet-mode"][value="name"]', (e) => e.checked), true, 'in the same mode');
+  assert.equal(await friend.$eval('#gen-clef', (e) => e.value), 'grand', 'with the same settings for new sheets');
+  assert.match(await text(friend, '#sheet-desc'), /shared sheet/);
+  await friend.click('#sheet-new');
+  assert.doesNotMatch(await friend.evaluate(() => location.hash), /notes=/, 'a new sheet leaves the shared link');
+  assert.doesNotMatch(await text(friend, '#sheet-desc'), /shared sheet/);
+  await friend.close();
+
+  // A damaged link: a new random sheet, and a note saying so.
+  const broken = await open('#sheet/random?notes=AAAAnotreally');
+  await broken.waitForFunction(() => document.querySelectorAll('#sheet .vf-stavenote').length > 0);
+  assert.match(await text(broken, '#sheet-status'), /couldn’t be read/);
+  await broken.close();
+
+  // No clipboard access: the link is shown to copy by hand.
+  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
+  await page.click('#sheet-share');
+  await page.waitForFunction(() => !document.getElementById('sheet-share-box').hidden);
+  assert.match(await page.$eval('#sheet-share-url', (e) => e.value), /#sheet\/random\?.*notes=/);
+  await page.close();
+});
+
+test('weekly summary: minutes, notes, pieces improved and trouble fixed', async () => {
+  const day = (ago) => { const d = new Date(); d.setDate(d.getDate() - ago); return d; };
+  const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const seeded = {
+    practiceTime: { [key(day(0))]: 600, [key(day(2))]: 1200, [key(day(9))]: 300 },
+    practiceLog: { [key(day(0))]: 40, [key(day(2))]: 60, [key(day(9))]: 10 },
+    milestones: [
+      { at: day(20).getTime(), type: 'stars', id: 'ode-hands', title: 'Ode to Joy', mode: 'play', stars: 1, from: 0 },
+      { at: day(2).getTime(), type: 'stars', id: 'minuet-g', title: 'Minuet in G', mode: 'tempo', stars: 2, from: 1 },
+      { at: day(1).getTime(), type: 'stars', id: 'minuet-g', title: 'Minuet in G', mode: 'tempo', stars: 3, from: 2 },
+      { at: day(1).getTime(), type: 'fixed', id: 'minuet-g', title: 'Minuet in G', bars: 'bar 5' },
+    ],
+    speedHistory: [
+      { at: day(10).getTime(), npm: 20, accuracy: 90, seconds: 60 },
+      { at: day(1).getTime(), npm: 26, accuracy: 92, seconds: 60 },
+    ],
+  };
+  const page = await open('#progress', { init: (s) => localStorage.setItem('piano-practice:v1', s), initArg: JSON.stringify(seeded) });
+  const line = await text(page, '#week-line');
+  assert.equal(line, 'Last 7 days: 30 minutes · 100 notes · 1 piece improved · 1 trouble spot fixed, on 2 days. That’s 25 more minutes than the week before.');
+  const items = await page.$$eval('#week-list li', (l) => l.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
+  assert.deepEqual(items, [
+    '★★★ Minuet in G (at tempo), up from 1 star',
+    'Trouble in bar 5 of Minuet in G fixed',
+    'Reading speed: 26 correct notes a minute, up from your best of 20',
+  ]);
+  assert.equal(await page.$eval('#week-list a', (a) => a.getAttribute('href')), '#sheet/minuet-g?mode=tempo');
+
+  // Practice time: the gaps between notes and answers, leaving out breaks over a minute.
+  const today = await page.evaluate(async (k) => {
+    const stats = await import('./js/stats.js');
+    const t = Date.now();
+    stats.activity(t);
+    stats.activity(t + 30000);
+    stats.activity(t + 200000); // after a break: not counted
+    stats.activity(t + 210000);
+    stats.flushTime();
+    return (await import('./js/storage.js')).get('practiceTime')[k];
+  }, key(day(0)));
+  assert.equal(today, 640);
+
+  // Syncing combines both devices' milestones and keeps each day's longer time.
+  const merged = await page.evaluate(async () => {
+    const { merge } = await import('./js/sync.js');
+    const a = { practiceTime: { d1: 100 }, milestones: [{ at: 1, type: 'stars', id: 'x' }] };
+    const b = { practiceTime: { d1: 60, d2: 30 }, milestones: [{ at: 1, type: 'stars', id: 'x' }, { at: 2, type: 'fixed', id: 'x' }] };
+    return merge(a, b);
+  });
+  assert.deepEqual(merged.practiceTime, { d1: 100, d2: 30 });
+  assert.equal(merged.milestones.length, 2);
+  await page.close();
+
+  const empty = await open('#progress');
+  assert.match(await text(empty, '#week-line'), /Nothing yet this week/);
+  await empty.close();
+});
+
+test('each Learn chapter ends with questions that check you learned it', async () => {
+  const page = await open('#learn');
+  // Every chapter's questions are well formed, whatever notes come up.
+  const problemsFound = await page.evaluate(async () => {
+    const { CHECKS } = await import('./js/learncheck.js');
+    const found = [];
+    for (const [id, make] of Object.entries(CHECKS)) {
+      for (let n = 0; n < 30; n++) {
+        const qs = make();
+        if (qs.length < 3 || qs.length > 5) found.push(`${id}: ${qs.length} questions`);
+        for (const q of qs) {
+          if (!q.choices.includes(q.answer)) found.push(`${id}: “${q.text}” has no right answer (${q.answer})`);
+          if (new Set(q.choices).size !== q.choices.length) found.push(`${id}: repeated choices ${q.choices}`);
+          if (!q.why) found.push(`${id}: “${q.text}” explains nothing`);
+        }
+      }
+    }
+    return [...new Set(found)];
+  });
+  assert.deepEqual(problemsFound, []);
+  const chapters = await page.$$eval('#learn-toc button', (b) => b.length);
+  for (let i = 0; i < chapters; i++) {
+    await page.click(`#learn-toc button[data-i="${i}"]`);
+    await wait(50);
+    const qs = await page.$$eval('#learn-body .check-q', (q) => q.map((x) => ({ sheet: !!x.querySelector('.check-sheet'), drawn: !!x.querySelector('.check-sheet svg') })));
+    assert.ok(qs.length >= 3, `chapter ${i + 1} has questions`);
+    assert.ok(qs.every((q) => q.sheet === q.drawn), `chapter ${i + 1}: every staff is drawn`);
+  }
+
+  // Chapter 1: Next no longer marks it done; answering does.
+  await page.click('#learn-toc button[data-i="0"]');
+  await page.click('#learn-next');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).learnDone), undefined, 'reading on isn’t passing');
+  await page.click('#learn-toc button[data-i="0"]');
+  // (Clicked directly: puppeteer's click can land on the piano dock that covers the bottom of the page.)
+  const choose = (q, c) => page.$eval(`#learn-body button[data-q="${q}"][data-choice="${c}"]`, (b) => b.click());
+  await choose(0, '5');
+  assert.match(await text(page, '#check-why-0'), /^Right! Five lines/);
+  await choose(1, 'Step'); // a step or a skip, at random: a slip is allowed
+  if (await page.$eval('#check-why-1', (e) => e.dataset.tone) === 'bad') await choose(1, 'Skip');
+  await choose(2, 'Higher');
+  assert.equal(await page.$('#check-result p'), null, 'not finished yet');
+  await choose(3, 'White key');
+  assert.match(await text(page, '#check-result'), /Chapter done ✓ [34] of 4 right first time/);
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).learnDone), ['staff']);
+  assert.equal(await text(page, '#learn-toc button[data-i="0"] .toc-num'), '✓');
+  await page.$eval('#check-result [data-action="next-chapter"]', (b) => b.click());
+  assert.equal(await text(page, '#learn-title'), 'The treble clef');
+
+  // Too many slips: not passed, and a new set is offered.
+  await page.click('#learn-toc button[data-i="10"]'); // Fingering, ties, dynamics & repeats
+  await choose(0, 'Little finger');
+  assert.equal(await page.$eval('#learn-body button[data-q="0"][data-choice="Little finger"]', (b) => b.disabled), true);
+  await choose(0, 'Thumb');
+  await choose(1, 'A note you play twice');
+  await choose(1, 'Two notes of the same pitch: play once and hold');
+  await choose(2, 'f');
+  await choose(3, 'Go back and play that part again');
+  assert.match(await text(page, '#check-result'), /2 of 4 right first time/);
+  assert.ok(!(await page.evaluate(() => JSON.parse(localStorage.getItem('piano-practice:v1')).learnDone)).includes('markings'));
+  await page.$eval('#check-result [data-action="new-check"]', (b) => b.click());
+  assert.equal(await page.$$eval('#learn-body .is-wrong, #learn-body .is-right', (b) => b.length), 0, 'a fresh set');
   await page.close();
 });
 
